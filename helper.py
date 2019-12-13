@@ -14,6 +14,9 @@ from models.fpn_global_local_fmreg_ensemble import fpn
 from utils.metrics import ConfusionMatrix
 from PIL import Image
 
+from scipy.special import softmax
+import utils.log as track
+
 # torch.cuda.synchronize()
 # torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.deterministic = True
@@ -21,7 +24,6 @@ torch.backends.cudnn.deterministic = True
 transformer = transforms.Compose([
     transforms.ToTensor(),
 ])
-
 def resize(images, shape, label=False):
     '''
     resize PIL images
@@ -63,7 +65,33 @@ def images_transform(images):
         inputs.append(transformer(img))
     inputs = torch.stack(inputs, dim=0).cuda()
     return inputs
+"""
+def resize(images, shape, label=False):
+    '''
+    resize PIL images
+    shape: (w, h)
+    '''
+    if label:
+        return [image.resize(shape, Image.NEAREST) for image in images]
+    return [image.resize(shape, Image.BILINEAR) for image in images]
 
+def masks_transform(masks, numpy=False):
+    '''
+    masks: list of PIL images
+    '''
+    targets = np.array([np.array(m).astype('int32') for m in masks], dtype=np.int32)
+    if numpy:
+        return targets
+    return torch.from_numpy(targets).long().cuda()
+
+def images_transform(images):
+    '''
+    images: list of PIL images
+    '''
+    inputs = [transformer(img) for img in images]
+    inputs = torch.stack(inputs, dim=0).cuda()
+    return inputs
+"""
 def get_patch_info(shape, p_size):
     '''
     shape: origin image size, (x, y)
@@ -285,6 +313,7 @@ class Trainer(object):
         self.metrics_global.reset()
 
     def train(self, sample, model, global_fixed):
+        track.start("read_data")
         images, labels = sample['image'], sample['label'] # PIL images
         labels_npy = masks_transform(labels, numpy=True) # label of origin size in numpy
 
@@ -292,13 +321,15 @@ class Trainer(object):
         images_glb = images_transform(images_glb)
         labels_glb = resize(labels, (self.size_g[0] // 4, self.size_g[1] // 4), label=True) # FPN down 1/4, for loss
         labels_glb = masks_transform(labels_glb)
-
+        track.end("read_data")
         if self.mode == 2 or self.mode == 3:
+            track.start("prepare_global2local_data")
             patches, coordinates, templates, sizes, ratios = global2patch(images, self.size_p)
             label_patches, _, _, _, _ = global2patch(labels, self.size_p)
-            predicted_patches = [ np.zeros((len(coordinates[i]), self.n_class, self.size_p[0], self.size_p[1])) for i in range(len(images)) ]
-            predicted_ensembles = [ np.zeros((len(coordinates[i]), self.n_class, self.size_p[0], self.size_p[1])) for i in range(len(images)) ]
-            outputs_global = [ None for i in range(len(images)) ]
+            #predicted_patches = [ np.zeros((len(coordinates[i]), self.n_class, self.size_p[0], self.size_p[1])) for i in range(len(images)) ]
+            #predicted_ensembles = [ np.zeros((len(coordinates[i]), self.n_class, self.size_p[0], self.size_p[1])) for i in range(len(images)) ]
+            #outputs_global = [ None for i in range(len(images)) ]
+            track.end("prepare_global2local_data")
 
         if self.mode == 1:
             # training with only (resized) global image #########################################
@@ -310,26 +341,32 @@ class Trainer(object):
             ##############################################
 
         if self.mode == 2:
+            track.start("ff_global2local_data")
             # training with patches ###########################################
             for i in range(len(images)):
                 j = 0
                 while j < len(coordinates[i]):
+                    track.start("transform_internal")
                     patches_var = images_transform(patches[i][j : j+self.sub_batch_size]) # b, c, h, w
                     label_patches_var = masks_transform(resize(label_patches[i][j : j+self.sub_batch_size], (self.size_p[0] // 4, self.size_p[1] // 4), label=True)) # down 1/4 for loss
-
+                    track.end("transform_internal")
+                    
+                    track.start("ff_internal")
                     output_ensembles, output_global, output_patches, fmreg_l2 = model.forward(images_glb[i:i+1], patches_var, coordinates[i][j : j+self.sub_batch_size], ratios[i], mode=self.mode, n_patch=len(coordinates[i]))
+                    track.end("ff_internal")
                     loss = self.criterion(output_patches, label_patches_var) + self.criterion(output_ensembles, label_patches_var) + self.lamb_fmreg * fmreg_l2
                     loss.backward()
 
                     # patch predictions
-                    predicted_patches[i][j:j+output_patches.size()[0]] = F.interpolate(output_patches, size=self.size_p, mode='nearest').data.cpu().numpy()
-                    predicted_ensembles[i][j:j+output_ensembles.size()[0]] = F.interpolate(output_ensembles, size=self.size_p, mode='nearest').data.cpu().numpy()
+                    #predicted_patches[i][j:j+output_patches.size()[0]] = F.interpolate(output_patches, size=self.size_p, mode='nearest').data.cpu().numpy()
+                    #predicted_ensembles[i][j:j+output_ensembles.size()[0]] = F.interpolate(output_ensembles, size=self.size_p, mode='nearest').data.cpu().numpy()
                     j += self.sub_batch_size
-                outputs_global[i] = output_global
-            outputs_global = torch.cat(outputs_global, dim=0)
+                #outputs_global[i] = output_global
+            #outputs_global = torch.cat(outputs_global, dim=0)
 
             self.optimizer.step()
             self.optimizer.zero_grad()
+            track.end("ff_global2local_data")
             #####################################################################################
 
         if self.mode == 3:
@@ -368,12 +405,12 @@ class Trainer(object):
                     j += self.sub_batch_size
             self.optimizer.step()
             self.optimizer.zero_grad()
-
+        '''
         # global predictions ###########################
         outputs_global = outputs_global.cpu()
         predictions_global = [F.interpolate(outputs_global[i:i+1], images[i].size[::-1], mode='nearest').argmax(1).detach().numpy() for i in range(len(images))]
         self.metrics_global.update(labels_npy, predictions_global)
-
+        
         if self.mode == 2 or self.mode == 3:
             # patch predictions ###########################
             scores_local = np.array(patch2global(predicted_patches, self.n_class, sizes, coordinates, self.size_p)) # merge softmax scores from patches (overlaps)
@@ -384,6 +421,7 @@ class Trainer(object):
             scores = np.array(patch2global(predicted_ensembles, self.n_class, sizes, coordinates, self.size_p)) # merge softmax scores from patches (overlaps)
             predictions = scores.argmax(1) # b, h, w
             self.metrics.update(labels_npy, predictions)
+        '''
         return loss
 
 
@@ -530,12 +568,19 @@ class Evaluator(object):
 
             if self.mode == 2 or self.mode == 3:
                 # patch predictions ###########################
-                predictions_local = [ score.argmax(1)[0] for score in scores_local ]
+                if self.test:
+                    predictions_local = [softmax(score.astype(np.float32), axis=1)[0,1, :, :] for score in scores_local ]
+                else:    
+                    predictions_local = [ score.argmax(1)[0] for score in scores_local ]
                 if not self.test:
                     self.metrics_local.update(labels_npy, predictions_local)
                 ###################################################
                 # combined/ensemble predictions ###########################
-                predictions = [ score.argmax(1)[0] for score in scores ]
+                if self.test:
+                    predictions = [ softmax(score.astype(np.float32), axis=1)[0,1, :, :] for score in scores ]
+                    #import pdb; pdb.set_trace()
+                else:
+                    predictions = [ score.argmax(1)[0] for score in scores ]
                 if not self.test:
                     self.metrics.update(labels_npy, predictions)
                 return predictions, predictions_global, predictions_local

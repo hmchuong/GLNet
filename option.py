@@ -16,13 +16,16 @@ class Options():
     def __init__(self):
         parser = argparse.ArgumentParser(description='PyTorch Segmentation')
         # model and dataset 
-        parser.add_argument('--n_class', type=int, default=7, help='segmentation classes')
+        parser.add_argument('--n_class', type=int, default=2, help='segmentation classes')
         parser.add_argument('--data_path', type=str, help='path to dataset where images store')
+        parser.add_argument('--train_csv', type=str, help='csv file stores list of training images')
+        parser.add_argument('--val_csv', type=str, help='csv file stores list of validation images')
         parser.add_argument('--model_path', type=str, help='path to store trained model files, no need to include task specific name')
         parser.add_argument('--log_path', type=str, help='path to store tensorboard log files, no need to include task specific name')
         parser.add_argument('--task_name', type=str, help='task name for naming saved model files and log files')
         parser.add_argument('--mode', type=int, default=1, choices=[1, 2, 3], help='mode for training procedure. 1: train global branch only. 2: train local branch with fixed global branch. 3: train global branch with fixed local branch')
         parser.add_argument('--evaluation', action='store_true', default=False, help='evaluation only')
+        parser.add_argument('--test', action='store_true', default=False, help='test only')
         parser.add_argument('--batch_size', type=int, default=6, help='batch size for origin global image (without downsampling)')
         parser.add_argument('--sub_batch_size', type=int, default=6, help='batch size for using local image patches')
         parser.add_argument('--size_g', type=int, default=508, help='size (in pixel) for downsampled global image')

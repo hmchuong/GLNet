@@ -51,7 +51,6 @@ class FocalLoss(nn.Module):
             valid = (target != self.ignore)
             input = input[valid]
             target = target[valid]
-
         if self.one_hot: target = one_hot(target, input.size(1))
         probs = F.softmax(input, dim=1)
         probs = (probs * target).sum(1)
