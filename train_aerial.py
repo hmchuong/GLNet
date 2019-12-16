@@ -39,8 +39,14 @@ print(task_name)
 
 mode = args.mode # 1: train global; 2: train local from global; 3: train global from local
 evaluation = args.evaluation
-test = evaluation and False
+test = args.test
 print("mode:", mode, "evaluation:", evaluation, "test:", test)
+
+##### sizes are (w, h) ##############################
+# make sure margin / 32 is over 1.5 AND size_g is divisible by 4
+size_g = (args.size_g, args.size_g) # resized global image
+size_p = (args.size_p, args.size_p) # cropped local patch size
+sub_batch_size = args.sub_batch_size # batch size for train local patches
 
 ###################################
 print("preparing datasets and dataloaders......")
@@ -50,19 +56,14 @@ train_names, val_test_names = train_test_split(image_names, train_size=126, rand
 val_names, test_names = train_test_split(val_test_names, train_size=0.5, random_state=2019)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-dataset_train = Aerial(data_path, train_names, label=True, transform=True)
-dataloader_train = torch.utils.data.DataLoader(dataset=dataset_train, batch_size=batch_size, num_workers=10, collate_fn=collate, shuffle=True, pin_memory=True)
-dataset_val = Aerial(data_path, val_names, label=True)
-dataloader_val = torch.utils.data.DataLoader(dataset=dataset_val, batch_size=batch_size, num_workers=10, collate_fn=collate, shuffle=False, pin_memory=True)
-dataset_test = Aerial(data_path, test_names, label=False)
-dataloader_test = torch.utils.data.DataLoader(dataset=dataset_test, batch_size=batch_size, num_workers=10, collate_fn=collate_test, shuffle=False, pin_memory=True)
-
-##### sizes are (w, h) ##############################
-# make sure margin / 32 is over 1.5 AND size_g is divisible by 4
-size_g = (args.size_g, args.size_g) # resized global image
-size_p = (args.size_p, args.size_p) # cropped local patch size
-sub_batch_size = args.sub_batch_size # batch size for train local patches
+dataset_train = Aerial(data_path, train_names, size_g, label=True, transform=True)
+dataloader_train = torch.utils.data.DataLoader(dataset=dataset_train, batch_size=batch_size, num_workers=20, collate_fn=collate, shuffle=True, pin_memory=True)
+dataset_val = Aerial(data_path, val_names, size_g, label=True)
+dataloader_val = torch.utils.data.DataLoader(dataset=dataset_val, batch_size=batch_size, num_workers=20, collate_fn=collate, shuffle=False, pin_memory=True)
+dataset_test = Aerial(data_path, image_names, size_g, label=False)
+dataloader_test = torch.utils.data.DataLoader(dataset=dataset_test, batch_size=batch_size, num_workers=20, collate_fn=collate_test, shuffle=False, pin_memory=True)
 ###################################
+
 print("creating models......")
 
 path_g = os.path.join(model_path, args.path_g)
@@ -101,17 +102,18 @@ for epoch in range(num_epochs):
     trainer.set_train(model)
     optimizer.zero_grad()
     tbar = tqdm(dataloader_train); train_loss = 0
+    track.start("Train")
     for i_batch, sample_batched in enumerate(tbar):
         if evaluation: break
         scheduler(optimizer, i_batch, epoch, best_pred)
-        #track.start("one_iter")
+        track.start("one_iter")
         loss = trainer.train(sample_batched, model, global_fixed)
-        #track.end("one_iter")
+        track.end("one_iter")
         train_loss += loss.item()
         score_train, score_train_global, score_train_local = trainer.get_scores()
         if mode == 1: tbar.set_description('Train loss: %.3f; global mIoU: %.3f' % (train_loss / (i_batch + 1), np.mean(np.nan_to_num(score_train_global["iou"]))))
         else: tbar.set_description('Train loss: %.3f; agg mIoU: %.3f' % (train_loss / (i_batch + 1), np.mean(np.nan_to_num(score_train["iou"]))))
-
+    track.end("Train")
     score_train, score_train_global, score_train_local = trainer.get_scores()
     trainer.reset_metrics()
     # torch.cuda.empty_cache()
@@ -123,7 +125,7 @@ for epoch in range(num_epochs):
 
             if test: tbar = tqdm(dataloader_test)
             else: tbar = tqdm(dataloader_val)
-
+            track.start("EVAL")
             for i_batch, sample_batched in enumerate(tbar):
                 predictions, predictions_global, predictions_local = evaluator.eval_test(sample_batched, model, global_fixed)
                 score_val, score_val_global, score_val_local = evaluator.get_scores()
@@ -152,7 +154,7 @@ for epoch in range(num_epochs):
                             writer.add_image('prediction', classToRGB(predictions[(epoch % len(dataloader_val)) - i_batch * batch_size]) * 255., epoch)
                             writer.add_image('prediction_local', classToRGB(predictions_local[(epoch % len(dataloader_val)) - i_batch * batch_size]) * 255., epoch)
                         writer.add_image('prediction_global', classToRGB(predictions_global[(epoch % len(dataloader_val)) - i_batch * batch_size]) * 255., epoch)
-
+            track.end("EVAL")
             # torch.cuda.empty_cache()
 
             # if not (test or evaluation): torch.save(model.state_dict(), "./saved_models/" + task_name + ".epoch" + str(epoch) + ".pth")
