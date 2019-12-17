@@ -2,6 +2,9 @@
 # https://github.com/wkentaro/pytorch-fcn/blob/master/torchfcn/utils.py
 
 import numpy as np
+import functools
+import threading
+from utils.distributed import all_gather
 
 class ConfusionMatrix(object):
 
@@ -17,7 +20,11 @@ class ConfusionMatrix(object):
         mask = (label_true >= 0) & (label_true < n_class)
         hist = np.bincount(n_class * label_true[mask].astype(int) + label_pred[mask], minlength=n_class**2).reshape(n_class, n_class)
         return hist
-
+    
+    def synchronize_between_processes(self):
+        confusions_matrices = all_gather(self.confusion_matrix)
+        self.confusion_matrix = sum(confusions_matrices)
+        
     def update(self, label_trues, label_preds):
         for lt, lp in zip(label_trues, label_preds):
             tmp = self._fast_hist(lt.flatten(), lp.flatten(), self.n_classes)

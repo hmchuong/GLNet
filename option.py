@@ -34,7 +34,15 @@ class Options():
         parser.add_argument('--path_g2l', type=str, default="", help='name for local from global model path')
         parser.add_argument('--path_l2g', type=str, default="", help='name for global from local model path')
         parser.add_argument('--lamb_fmreg', type=float, default=0.15, help='loss weight feature map regularization')
-
+        parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
+                        help='number of data loading workers (default: 16)')
+        parser.add_argument('--device', default='cuda', help='device')
+        
+        # For distributed
+        parser.add_argument('--dist-url', default='env://', help='url used to set up distributed training')
+        parser.add_argument('--world-size', default=1, type=int,
+                        help='number of distributed processes')
+        
         # the parser
         self.parser = parser
 

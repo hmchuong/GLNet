@@ -19,12 +19,14 @@ from scipy.special import softmax
 import utils.log as track
 from functools import partial
 import torch.nn as nn
+import torch.distributed as dist
 
 from dataset.aerial import AerialSubdatasetMode2, AerialSubdatasetMode3a, AerialSubdatasetMode3b
+from utils.distributed import all_gather
 
 # torch.cuda.synchronize()
 # torch.backends.cudnn.benchmark = True
-torch.backends.cudnn.deterministic = True
+#torch.backends.cudnn.deterministic = True
 
 transformer = transforms.Compose([
     transforms.ToTensor(),
@@ -42,14 +44,14 @@ def resize(images, shape, label=False):
     resize_fn = partial(TF.resize, size=shape, interpolation=Image.NEAREST if label else Image.BILINEAR)
     return emap(resize_fn, images)
 
-def masks_transform(masks, numpy=False):
+def masks_transform(masks, device, numpy=False):
     '''
     masks: list of PIL images
     '''
     targets = np.array([np.array(m).astype('int32') for m in masks], dtype=np.int32)
     if numpy:
         return targets
-    return torch.from_numpy(targets).long().cuda()
+    return torch.from_numpy(targets).long().to(device)
 
 def images_transform(images):
     '''
@@ -269,64 +271,72 @@ def collate_test(batch):
     return {'image': image, 'id': id}
 
 
-def create_model_load_weights(n_class, mode=1, evaluation=False, path_g=None, path_g2l=None, path_l2g=None):
+def create_model_load_weights(n_class, args, device, mode=1, evaluation=False, path_g=None, path_g2l=None, path_l2g=None):
     model = fpn(n_class)
-    model = nn.DataParallel(model)
-    model = model.cuda()
+    #model = nn.DataParallel(model)
+    model = model.to(device)
+    model_without_ddp = model
+    if args.distributed:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
+        model_without_ddp = model.module
 
     if (mode == 2 and not evaluation) or (mode == 1 and evaluation):
         # load fixed basic global branch
-        partial = torch.load(path_g)
-        state = model.state_dict()
+        partial = torch.load(path_g, map_location='cpu')
+        state = model_without_ddp.state_dict()
         # 1. filter out unnecessary keys
         pretrained_dict = {k: v for k, v in partial.items() if k in state and "local" not in k}
         # 2. overwrite entries in the existing state dict
         state.update(pretrained_dict)
         # 3. load the new state dict
-        model.load_state_dict(state)
+        model_without_ddp.load_state_dict(state)
 
     if (mode == 3 and not evaluation) or (mode == 2 and evaluation):
-        partial = torch.load(path_g2l)
-        state = model.state_dict()
+        partial = torch.load(path_g2l,)
+        state = model_without_ddp.state_dict()
         # 1. filter out unnecessary keys
         pretrained_dict = {k: v for k, v in partial.items() if k in state}# and "global" not in k}
         # 2. overwrite entries in the existing state dict
         state.update(pretrained_dict)
         # 3. load the new state dict
-        model.load_state_dict(state)
+        model_without_ddp.load_state_dict(state)
 
     global_fixed = None
     if mode == 3:
         # load fixed basic global branch
         global_fixed = fpn(n_class)
-        global_fixed = nn.DataParallel(global_fixed)
-        global_fixed = global_fixed.cuda()
-        partial = torch.load(path_g)
-        state = global_fixed.state_dict()
+        #global_fixed = nn.DataParallel(global_fixed)
+        global_fixed = global_fixed.to(device)
+        glob_without_ddp = global_fixed
+        if args.distributed:
+            global_fixed = torch.nn.parallel.DistributedDataParallel(global_fixed, device_ids=[args.gpu], find_unused_parameters=True)
+            glob_without_ddp = global_fixed.module
+        partial = torch.load(path_g, map_location='cpu')
+        state = glob_without_ddp.state_dict()
         # 1. filter out unnecessary keys
         pretrained_dict = {k: v for k, v in partial.items() if k in state and "local" not in k}
         # 2. overwrite entries in the existing state dict
         state.update(pretrained_dict)
         # 3. load the new state dict
-        global_fixed.load_state_dict(state)
+        glob_without_ddp.load_state_dict(state)
         global_fixed.eval()
 
     if mode == 3 and evaluation:
-        partial = torch.load(path_l2g)
-        state = model.state_dict()
+        partial = torch.load(path_l2g, map_location='cpu')
+        state = model_without_ddp.state_dict()
         # 1. filter out unnecessary keys
         pretrained_dict = {k: v for k, v in partial.items() if k in state}# and "global" not in k}
         # 2. overwrite entries in the existing state dict
         state.update(pretrained_dict)
         # 3. load the new state dict
-        model.load_state_dict(state)
+        model_without_ddp.load_state_dict(state)
 
     if mode == 1 or mode == 3:
-        model.module.resnet_local.eval()
-        model.module.fpn_local.eval()
+        model_without_ddp.resnet_local.eval()
+        model_without_ddp.fpn_local.eval()
     else:
-        model.module.resnet_global.eval()
-        model.module.fpn_global.eval()
+        model_without_ddp.resnet_global.eval()
+        model_without_ddp.fpn_global.eval()
     
     return model, global_fixed
 
@@ -353,7 +363,7 @@ def get_optimizer(model, mode=1, learning_rate=2e-5):
     return optimizer
 
 class Trainer(object):
-    def __init__(self, criterion, optimizer, n_class, size_g, size_p, sub_batch_size=6, mode=1, lamb_fmreg=0.15):
+    def __init__(self, device, criterion, optimizer, n_class, size_g, size_p, sub_batch_size=6, mode=1, lamb_fmreg=0.15):
         self.criterion = criterion
         self.optimizer = optimizer
         self.metrics_global = ConfusionMatrix(n_class)
@@ -365,6 +375,7 @@ class Trainer(object):
         self.sub_batch_size = sub_batch_size
         self.mode = mode
         self.lamb_fmreg = lamb_fmreg
+        self.device = device
     
     def set_train(self, model):
         model.module.ensemble_conv.train()
@@ -392,7 +403,7 @@ class Trainer(object):
         #images_glb = resize(images, self.size_g) # list of resized PIL images
         #images_glb = images_transform(images_glb)
         labels_glb = resize(labels, (self.size_g[0] // 4, self.size_g[1] // 4), label=True) # FPN down 1/4, for loss
-        labels_glb = masks_transform(labels_glb)
+        labels_glb = masks_transform(labels_glb, self.device)
         if self.mode == 2 or self.mode == 3:
             patches, coordinates, templates, sizes, ratios = global2patch(images, self.size_p)
             label_patches, _, _, _, _ = global2patch(labels, self.size_p)
@@ -403,6 +414,7 @@ class Trainer(object):
         if self.mode == 1:
             # training with only (resized) global image #########################################
             outputs_global, _ = model.forward(images_glb, None, None, None)
+            #import pdb; pdb.set_trace()
             loss = self.criterion(outputs_global, labels_glb)
             loss.backward()
             self.optimizer.step()
@@ -569,6 +581,7 @@ class Trainer(object):
             predictions = scores.argmax(1) # b, h, w
             self.metrics.update(labels_npy, predictions)
         '''
+        dist.all_reduce(loss)
         return loss
 
 
@@ -592,8 +605,11 @@ class Evaluator(object):
             self.rotate_range = [0]
     
     def get_scores(self):
+        self.metrics.synchronize_between_processes()
         score_train = self.metrics.get_scores()
+        self.metrics_local.synchronize_between_processes()
         score_train_local = self.metrics_local.get_scores()
+        self.metrics_global.synchronize_between_processes()
         score_train_global = self.metrics_global.get_scores()
         return score_train, score_train_global, score_train_local
 
