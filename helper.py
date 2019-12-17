@@ -53,13 +53,13 @@ def masks_transform(masks, device, numpy=False):
         return targets
     return torch.from_numpy(targets).long().to(device)
 
-def images_transform(images):
+def images_transform(images, device):
     '''
     images: list of PIL images
     '''
     
     inputs = [transformer(img) for img in images]
-    inputs = torch.stack(inputs, dim=0).cuda()
+    inputs = torch.stack(inputs, dim=0).to(device)
     return inputs
 
 def get_patch_info(shape, p_size):
@@ -424,38 +424,33 @@ class Trainer(object):
         if self.mode == 2:
             
             # training with patches ###########################################
-            subdataset = AerialSubdatasetMode2(images_glb, ratios, coordinates, patches, label_patches, (self.size_p[0] // 4, self.size_p[1] // 4))
-            data_loader = torch.utils.data.DataLoader(dataset=subdataset, \
-                                                    batch_size=self.sub_batch_size, \
-                                                    num_workers=20, \
-                                                    collate_fn=collate_mode2, \
-                                                    shuffle=False, pin_memory=True)
-            for batch_sample in data_loader:
-                for sub_batch_id in range(len(batch_sample['n_patch'])):
-                    patches_var = batch_sample['patches'][sub_batch_id].cuda()
-                    label_patches_var = batch_sample['labels'][sub_batch_id].cuda()
-                    output_ensembles, output_global, output_patches, fmreg_l2 = model.forward(batch_sample['images_glob'][sub_batch_id].cuda(), \
-                                                                                            patches_var, \
-                                                                                            batch_sample['coords'][sub_batch_id], \
-                                                                                            batch_sample['ratio'][sub_batch_id], mode=self.mode, \
-                                                                                            n_patch=batch_sample['n_patch'][sub_batch_id])
+            # subdataset = AerialSubdatasetMode2(images_glb, ratios, coordinates, patches, label_patches, (self.size_p[0] // 4, self.size_p[1] // 4))
+            # data_loader = torch.utils.data.DataLoader(dataset=subdataset, \
+            #                                         batch_size=self.sub_batch_size, \
+            #                                         num_workers=20, \
+            #                                         collate_fn=collate_mode2, \
+            #                                         shuffle=False, pin_memory=True)
+            # for batch_sample in data_loader:
+            #     for sub_batch_id in range(len(batch_sample['n_patch'])):
+            #         patches_var = batch_sample['patches'][sub_batch_id].cuda()
+            #         label_patches_var = batch_sample['labels'][sub_batch_id].cuda()
+            #         output_ensembles, output_global, output_patches, fmreg_l2 = model.forward(batch_sample['images_glob'][sub_batch_id].cuda(), \
+            #                                                                                 patches_var, \
+            #                                                                                 batch_sample['coords'][sub_batch_id], \
+            #                                                                                 batch_sample['ratio'][sub_batch_id], mode=self.mode, \
+            #                                                                                 n_patch=batch_sample['n_patch'][sub_batch_id])
 
-                    loss = self.criterion(output_patches, label_patches_var) + self.criterion(output_ensembles, label_patches_var) + self.lamb_fmreg * fmreg_l2
-                    loss.backward()
+            #         loss = self.criterion(output_patches, label_patches_var) + self.criterion(output_ensembles, label_patches_var) + self.lamb_fmreg * fmreg_l2
+            #         loss.backward()
             
-            ''' 
+            
             for i in range(len(images)):
                 j = 0
-                print("LEN", len(coordinates[i]))
                 while j < len(coordinates[i]):
-                    track.start("transform_internal")
-                    patches_var = images_transform(patches[i][j : j+self.sub_batch_size]) # b, c, h, w
-                    label_patches_var = masks_transform(resize(label_patches[i][j : j+self.sub_batch_size], (self.size_p[0] // 4, self.size_p[1] // 4), label=True)) # down 1/4 for loss
-                    track.end("transform_internal")
-                    
-                    track.start("ff_internal")
+                    patches_var = images_transform(patches[i][j : j+self.sub_batch_size], self.device) # b, c, h, w
+                    label_patches_var = masks_transform(resize(label_patches[i][j : j+self.sub_batch_size], (self.size_p[0] // 4, self.size_p[1] // 4), label=True), self.device) # down 1/4 for loss
+
                     output_ensembles, output_global, output_patches, fmreg_l2 = model.forward(images_glb[i:i+1], patches_var, coordinates[i][j : j+self.sub_batch_size], ratios[i], mode=self.mode, n_patch=len(coordinates[i]))
-                    track.end("ff_internal")
                     loss = self.criterion(output_patches, label_patches_var) + self.criterion(output_ensembles, label_patches_var) + self.lamb_fmreg * fmreg_l2
                     loss.backward()
 
@@ -465,7 +460,7 @@ class Trainer(object):
                     j += self.sub_batch_size
                 #outputs_global[i] = output_global
             #outputs_global = torch.cat(outputs_global, dim=0)
-            '''
+            
             self.optimizer.step()
             self.optimizer.zero_grad()
             #####################################################################################
@@ -586,7 +581,7 @@ class Trainer(object):
 
 
 class Evaluator(object):
-    def __init__(self, n_class, size_g, size_p, sub_batch_size=6, mode=1, test=False):
+    def __init__(self, device, n_class, size_g, size_p, sub_batch_size=6, mode=1, test=False):
         self.metrics_global = ConfusionMatrix(n_class)
         self.metrics_local = ConfusionMatrix(n_class)
         self.metrics = ConfusionMatrix(n_class)
@@ -596,6 +591,7 @@ class Evaluator(object):
         self.sub_batch_size = sub_batch_size
         self.mode = mode
         self.test = test
+        self.device = device
 
         if test:
             self.flip_range = [False, True]
@@ -649,7 +645,7 @@ class Evaluator(object):
                                 images_local[b] = transforms.functional.rotate(images_local[b], 90)
 
                     # prepare global images onto cuda
-                    images_glb = images_transform(images_global) # b, c, h, w
+                    images_glb = images_transform(images_global, self.device) # b, c, h, w
                     images_glb = images_glb.cuda()
                     if self.mode == 2 or self.mode == 3:
                         patches, coordinates, templates, sizes, ratios = global2patch(images, self.size_p)
@@ -669,7 +665,7 @@ class Evaluator(object):
                         for i in range(len(images)):
                             j = 0
                             while j < len(coordinates[i]):
-                                patches_var = images_transform(patches[i][j : j+self.sub_batch_size]) # b, c, h, w
+                                patches_var = images_transform(patches[i][j : j+self.sub_batch_size], self.device) # b, c, h, w
                                 output_ensembles, output_global, output_patches, _ = model.forward(images_glb[i:i+1], patches_var, coordinates[i][j : j+self.sub_batch_size], ratios[i], mode=self.mode, n_patch=len(coordinates[i]))
 
                                 # patch predictions
@@ -742,7 +738,6 @@ class Evaluator(object):
                 # combined/ensemble predictions ###########################
                 if self.test:
                     predictions = [ softmax(score.astype(np.float32), axis=1)[0,1, :, :] for score in scores ]
-                    #import pdb; pdb.set_trace()
                 else:
                     predictions = [ score.argmax(1)[0] for score in scores ]
                 if not self.test:

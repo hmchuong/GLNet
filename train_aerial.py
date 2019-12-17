@@ -20,7 +20,7 @@ from tensorboardX import SummaryWriter
 from helper import create_model_load_weights, get_optimizer, Trainer, Evaluator, collate, collate_test
 from option import Options
 import utils.log as track
-from utils.distributed import init_distributed_mode, MetricLogger, reduce_dict, SmoothedValue, save_on_master
+from utils.distributed import init_distributed_mode, MetricLogger, reduce_dict, SmoothedValue, save_on_master, is_main_process
 
 args = Options().parse()
 n_class = args.n_class
@@ -110,7 +110,7 @@ if not evaluation:
     f_log = open(os.path.join(log_path, task_name + ".log"), 'w')
 
 trainer = Trainer(device, criterion, optimizer, n_class, size_g, size_p, sub_batch_size, mode, lamb_fmreg)
-evaluator = Evaluator(n_class, size_g, size_p, sub_batch_size, mode, test)
+evaluator = Evaluator(device, n_class, size_g, size_p, sub_batch_size, mode, test)
 
 best_pred = 0.0
 print("start training......")
@@ -210,9 +210,10 @@ for epoch in range(num_epochs):
 
                 f_log.write(log)
                 f_log.flush()
-                if mode == 1:
-                    writer.add_scalars('IoU', {'validation iou': np.mean(np.nan_to_num(score_val_global["iou"][1:]))}, epoch)
-                else:
-                    writer.add_scalars('IoU', {'validation iou': np.mean(np.nan_to_num(score_val["iou"][1:]))}, epoch)
+                if is_main_process():
+                    if mode == 1:
+                        writer.add_scalars('IoU', {'validation iou': np.mean(np.nan_to_num(score_val_global["iou"][1:]))}, epoch)
+                    else:
+                        writer.add_scalars('IoU', {'validation iou': np.mean(np.nan_to_num(score_val["iou"][1:]))}, epoch)
             torch.set_num_threads(n_threads)
 if not evaluation: f_log.close()
