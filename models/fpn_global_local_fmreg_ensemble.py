@@ -355,8 +355,8 @@ class fpn(nn.Module):
         '''
         with torch.no_grad():
             if self.patch_n == 0:
-                self.c2_g, self.c3_g, self.c4_g, self.c5_g = global_model.module.resnet_global.forward(image_global)
-                self.output_g, self.ps0_g, self.ps1_g, self.ps2_g, self.ps3_g = global_model.module.fpn_global.forward(self.c2_g, self.c3_g, self.c4_g, self.c5_g)
+                self.c2_g, self.c3_g, self.c4_g, self.c5_g = getattr(global_model, "module", global_model).resnet_global.forward(image_global)
+                self.output_g, self.ps0_g, self.ps1_g, self.ps2_g, self.ps3_g = getattr(global_model, "module", global_model).fpn_global.forward(self.c2_g, self.c3_g, self.c4_g, self.c5_g)
                 # self.output_g = F.interpolate(self.output_g, image_global.size()[2:], mode='nearest')
             self.patch_n += patches.size()[0]
             self.patch_n %= n_patch_all

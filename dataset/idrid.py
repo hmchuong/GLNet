@@ -38,7 +38,7 @@ def label_bluring(inputs):
 class IDRID(data.Dataset):
     """input and label image dataset"""
 
-    def __init__(self, root, dataframe, label=False, transform=False):
+    def __init__(self, root, dataframe, global_size, label=False, transform=False):
         super(IDRID, self).__init__()
         """
         Args:
@@ -53,6 +53,10 @@ class IDRID(data.Dataset):
         
         self.color_jitter = transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.04)
         self.resizer = transforms.Resize((3410, 3410))
+        self.transformer = transforms.Compose([
+            transforms.Resize(global_size, Image.BILINEAR),
+            transforms.ToTensor()
+        ])
 
     def __getitem__(self, index):
         sample = {}
@@ -70,11 +74,12 @@ class IDRID(data.Dataset):
                 label[label > 0] = 1
                 label[label == 0] = 0
                 label = Image.fromarray(label)
+            if self.transform:
+                image, label = self._transform(sample['image'], label)
+                sample['image'] = image
             sample['label'] = label
-        if self.transform and self.label:
-            image, label = self._transform(sample['image'], sample['label'])
-            sample['image'] = image
-            sample['label'] = label
+            sample['label_npy'] = np.array(label)
+        sample['image_glb'] = self.transformer(sample['image'])
         # return {'image': image.astype(np.float32), 'label': label.astype(np.int64)}
         return sample
 

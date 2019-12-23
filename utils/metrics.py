@@ -18,6 +18,7 @@ class ConfusionMatrix(object):
 
     def _fast_hist(self, label_true, label_pred, n_class):
         mask = (label_true >= 0) & (label_true < n_class)
+        #import pdb; pdb.set_trace()
         hist = np.bincount(n_class * label_true[mask].astype(int) + label_pred[mask], minlength=n_class**2).reshape(n_class, n_class)
         return hist
     
@@ -27,6 +28,7 @@ class ConfusionMatrix(object):
         
     def update(self, label_trues, label_preds):
         for lt, lp in zip(label_trues, label_preds):
+            #import pdb; pdb.set_trace()
             tmp = self._fast_hist(lt.flatten(), lp.flatten(), self.n_classes)
             
             # iu = np.diag(tmp) / (tmp.sum(axis=1) + tmp.sum(axis=0) - np.diag(tmp))
@@ -48,7 +50,6 @@ class ConfusionMatrix(object):
         # axis in sum: perform summation along
         acc = np.nan_to_num(np.diag(hist) / hist.sum(axis=1))
         acc_mean = np.mean(np.nan_to_num(acc))
-        
         intersect = np.diag(hist)
         union = hist.sum(axis=1) + hist.sum(axis=0) - np.diag(hist)
         iou = intersect / union

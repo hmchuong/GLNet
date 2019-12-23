@@ -73,6 +73,7 @@ class Aerial(data.Dataset):
         sample['id'] = image_name.replace(".tif", "")
         image = Image.open(os.path.join(self.root, "images", image_name)).convert("RGB") # w, h
         sample['image'] = transforms.functional.resize(image, (self.image_size, self.image_size))
+        
         if self.label:
             label = Image.open(os.path.join(self.root, "gt", image_name)).convert("RGB")
             label = transforms.functional.resize(label, (self.image_size, self.image_size))

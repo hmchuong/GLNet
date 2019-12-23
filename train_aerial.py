@@ -3,13 +3,14 @@
 
 from __future__ import absolute_import, division, print_function
 
+import torch
+import torch.nn as nn
 import os
 import time
+import cv2
 import numpy as np
 from sklearn.model_selection import train_test_split
 import pandas as pd
-import torch
-import torch.nn as nn
 from torchvision import transforms
 from tqdm import tqdm
 from dataset.aerial import Aerial, classToRGB
@@ -62,7 +63,7 @@ val_names, test_names = train_test_split(val_test_names, train_size=0.5, random_
 
 dataset_train = Aerial(data_path, train_names, size_g, label=True, transform=True)
 dataset_val = Aerial(data_path, val_names, size_g, label=True)
-dataset_test = Aerial(data_path, image_names, size_g, label=False)
+dataset_test = Aerial(data_path, image_names, size_g, label=True)
 
 if args.distributed:
     train_sampler = torch.utils.data.distributed.DistributedSampler(dataset_train)
@@ -160,17 +161,45 @@ for epoch in range(num_epochs):
                 model_time = time.time() - model_time
                 metric_logger.update(model_time=model_time)
                 images = sample_batched['image']
-                if not test:
-                    labels = sample_batched['label'] # PIL images
+                #if not test:
+                labels = sample_batched['label'] # PIL images
 
                 if test:
                     prediction_dir = f"./prediction/{task_name}"
                     os.makedirs(prediction_dir, exist_ok=True)
                     for i in range(len(images)):
-                        if mode == 1:
-                            transforms.functional.to_pil_image(classToRGB(predictions_global[i]) * 255.).save(os.path.join(prediction_dir, sample_batched['id'][i] + "_mask.png"))
-                        else:
-                            transforms.functional.to_pil_image(classToRGB(predictions[i]) * 255.).save(os.path.join(prediction_dir, sample_batched['id'][i] + "_mask.png"))
+                        img = np.array(images[i])[:,:,[2,1,0]]
+                        h = img.shape[0]
+                        line = np.zeros((h, 20, 3))
+                        line[:, :, 2] = 255
+                        
+                        label = np.array(labels[i]) * 255
+                        label = np.expand_dims(label, axis=2)
+                        label = np.concatenate((label, label, label), axis=2)
+                        img = np.concatenate((img, line), axis=1)
+                        img = np.concatenate((img, label), axis=1)
+                        if predictions_global is not None:
+                            pred = np.expand_dims(predictions_global[i] * 255, axis=2)
+                            pred = np.concatenate((pred, pred, pred), axis=2)
+                            img = np.concatenate((img, line), axis=1)
+                            img = np.concatenate((img, pred), axis=1)
+                            #cv2.imwrite(os.path.join(prediction_dir, sample_batched['id'][i] + "_glob_mask.png"), )
+                            #transforms.functional.to_pil_image(classToRGB(predictions_global[i]) * 255.).save(os.path.join(prediction_dir, sample_batched['id'][i] + "_mask.png"))
+                        if predictions_local is not None:
+                            #cv2.imwrite(os.path.join(prediction_dir, sample_batched['id'][i] + "_local_mask.png"), predictions_local[i] * 255)
+                            pred = np.expand_dims(predictions_local[i] * 255, axis=2)
+                            pred = np.concatenate((pred, pred, pred), axis=2)
+                            img = np.concatenate((img, line), axis=1)
+                            img = np.concatenate((img, pred), axis=1)
+                        if predictions is not None:
+                            pred = np.expand_dims(predictions[i] * 255, axis=2)
+                            pred = np.concatenate((pred, pred, pred), axis=2)
+                            img = np.concatenate((img, line), axis=1)
+                            img = np.concatenate((img, pred), axis=1)
+                            #cv2.imwrite(os.path.join(prediction_dir, sample_batched['id'][i] + "_agg_mask.png"), predictions[i] * 255)
+                            #transforms.functional.to_pil_image(classToRGB(predictions[i]) * 255.).save(os.path.join(prediction_dir, sample_batched['id'][i] + "_mask.png"))
+                        cv2.imwrite(os.path.join(prediction_dir, sample_batched['id'][i] + "_result.png"), img)
+                        
 
                 if not evaluation and not test:
                     if i_batch * batch_size + len(images) > (epoch % len(dataloader_val)) and i_batch * batch_size <= (epoch % len(dataloader_val)):
@@ -192,11 +221,11 @@ for epoch in range(num_epochs):
                 if mode == 1:
                     if np.mean(np.nan_to_num(score_val_global["iou"][1:])) > best_pred: 
                         best_pred = np.mean(np.nan_to_num(score_val_global["iou"][1:]))
-                        save_on_master(model.module.state_dict(), os.path.join(args.model_path, task_name + ".pth"))
+                        if not (test or evaluation): save_on_master(model.module.state_dict(), os.path.join(args.model_path, task_name + ".pth"))
                 else:
                     if np.mean(np.nan_to_num(score_val["iou"][1:])) > best_pred: 
                         best_pred = np.mean(np.nan_to_num(score_val["iou"][1:]))
-                        save_on_master(model.module.state_dict(), os.path.join(args.model_path, task_name + ".pth"))
+                        if not (test or evaluation): save_on_master(model.module.state_dict(), os.path.join(args.model_path, task_name + ".pth"))
                 log = ""
                 log = log + 'epoch [{}/{}] IoU: {:.4f}'.format(epoch+1, num_epochs, np.mean(np.nan_to_num(score_val["iou"][1:]))) + "\n"
                 log = log + 'epoch [{}/{}] Local  -- IoU: val = {:.4f}'.format(epoch+1, num_epochs, np.mean(np.nan_to_num(score_val_local["iou"][1:]))) + "\n"

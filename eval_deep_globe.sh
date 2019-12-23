@@ -1,12 +1,12 @@
 export CUDA_VISIBLE_DEVICES=0
 python train_deep_globe.py \
 --n_class 7 \
---data_path "/ssd1/chenwy/deep_globe/data/" \
---model_path "/home/chenwy/deep_globe/saved_models/" \
---log_path "/home/chenwy/deep_globe/runs/" \
---task_name "eval" \
+--data_path "/chuong/deep_globe/" \
+--model_path "/chuong/saved_models/" \
+--log_path "/chuong/logs/" \
+--task_name "eval_deepglob" \
 --mode 3 \
---batch_size 6 \
+--batch_size 1 \
 --sub_batch_size 6 \
 --size_g 508 \
 --size_p 508 \
