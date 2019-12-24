@@ -41,7 +41,7 @@ class DeepGlobe(BaseDataset):
         ids_train = [image_name for image_name in os.listdir(os.path.join(data_path, "train", "Sat")) if is_image_file(image_name)]
         ids_val = [image_name for image_name in os.listdir(os.path.join(data_path, "crossvali", "Sat")) if is_image_file(image_name)]
         ids_test = [image_name for image_name in os.listdir(os.path.join(data_path, "test", "Sat")) if is_image_file(image_name)]
-        return ids_train, ids_val, ids_test
+        return (ids_train, os.path.join(data_path, "train")), (ids_val, os.path.join(data_path, "crossvali")), (ids_test, os.path.join(data_path, "test"))
 
     def __getitem__(self, index):
         sample = {}

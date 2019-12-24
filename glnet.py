@@ -22,18 +22,18 @@ from utils.lovasz_losses import lovasz_softmax
 from utils.lr_scheduler import LR_Scheduler
 from utils.distributed import init_distributed_mode, MetricLogger, reduce_dict, SmoothedValue, save_on_master, is_main_process
 
-from engine import create_model_load_weights, get_optimizer, Trainer, Evaluator, collate, collate_test
+from engine import create_model_load_weights, get_optimizer, Trainer, Evaluator, collate
 from option import Options
 
 def prepare_dataset_loaders(dataset_name, data_path, batch_size, distributed):
 
     print("preparing datasets and dataloaders......")
     Dataset = eval(dataset_name)
-    train_ids, val_ids, test_ids = Dataset.prepare_subset_ids(data_path)
+    (train_ids, train_data_path), (val_ids, val_data_path), (test_ids, test_data_path) = Dataset.prepare_subset_ids(data_path)
 
-    dataset_train = Dataset(data_path, train_ids, label=True, transform=True)
-    dataset_val = Dataset(data_path, val_ids, label=True)
-    dataset_test = Dataset(data_path, test_ids, label=True)
+    dataset_train = Dataset(train_data_path, train_ids, label=True, transform=True)
+    dataset_val = Dataset(val_data_path, val_ids, label=True)
+    dataset_test = Dataset(test_data_path, test_ids, label=True)
 
     if distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(dataset_train)
@@ -237,9 +237,10 @@ def main(args):
 
             if evaluation: break
 
-            f_log.write(log)
-            f_log.flush()
+            
             if is_main_process():
+                f_log.write(log)
+                f_log.flush()
                 writer.add_scalars('IoU', {'validation iou': current_score}, epoch)
             torch.set_num_threads(n_threads)
 

@@ -278,7 +278,7 @@ class Trainer(object):
         images_glb = resize(images, self.size_g) # list of resized PIL images
         images_glb = images_transform(images_glb, self.device)
         labels_glb = resize(labels, (self.size_g[0] // 4, self.size_g[1] // 4), label=True) # FPN down 1/4, for loss
-        labels_glb = masks_transform(labels_glb, rgb2class, self.device)
+        labels_glb = masks_transform(labels_glb, self.device, rgb2class)
 
         if self.mode == 2 or self.mode == 3:
             patches, coordinates, templates, _, ratios = global2patch(images, self.size_p, self.device)
@@ -287,6 +287,9 @@ class Trainer(object):
         if self.mode == 1:
             # training with only (resized) global image #########################################
             outputs_global, _ = model.forward(images_glb, None, None, None)
+            #print(outputs_global.shape, labels_glb.shape)
+            #print(outputs_global, labels_glb)
+            #import pdb; pdb.set_trace()
             loss = self.criterion(outputs_global, labels_glb)
             loss.backward()
             self.optimizer.step()
@@ -299,7 +302,7 @@ class Trainer(object):
                 j = 0
                 while j < len(coordinates[i]):
                     patches_var = images_transform(patches[i][j : j+self.sub_batch_size], self.device) # b, c, h, w
-                    label_patches_var = masks_transform(resize(label_patches[i][j : j+self.sub_batch_size], (self.size_p[0] // 4, self.size_p[1] // 4), label=True), rgb2class, self.device) # down 1/4 for loss
+                    label_patches_var = masks_transform(resize(label_patches[i][j : j+self.sub_batch_size], (self.size_p[0] // 4, self.size_p[1] // 4), label=True), self.device, rgb2class) # down 1/4 for loss
 
                     output_ensembles, _, output_patches, fmreg_l2 = model.forward(images_glb[i:i+1], patches_var, coordinates[i][j : j+self.sub_batch_size], ratios[i], mode=self.mode, n_patch=len(coordinates[i]))
                     loss = self.criterion(output_patches, label_patches_var) + self.criterion(output_ensembles, label_patches_var) + self.lamb_fmreg * fmreg_l2
@@ -330,7 +333,7 @@ class Trainer(object):
             for i in range(len(images)):
                 j = 0
                 while j < len(coordinates[i]):
-                    label_patches_var = masks_transform(resize(label_patches[i][j : j+self.sub_batch_size], (self.size_p[0] // 4, self.size_p[1] // 4), label=True), rgb2class, self.device)
+                    label_patches_var = masks_transform(resize(label_patches[i][j : j+self.sub_batch_size], (self.size_p[0] // 4, self.size_p[1] // 4), label=True), self.device, rgb2class)
                     fl = fm_patches[i][j : j+self.sub_batch_size].to(self.device)
                     fg = model.module._crop_global(fm_global[i:i+1], coordinates[i][j:j+self.sub_batch_size], ratios[i])[0]
                     fg = F.interpolate(fg, size=fl.size()[2:], mode='bilinear')
