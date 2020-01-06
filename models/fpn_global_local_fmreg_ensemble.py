@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 import numpy as np
-
+from utils.loss import MSELossWithMargin
 
 class fpn_module_global(nn.Module):
     def __init__(self, numClass):
@@ -247,7 +247,9 @@ class fpn(nn.Module):
 
         self.patch_n = 0
 
-        self.mse = nn.MSELoss()
+        #self.mse = nn.MSELoss()
+        # TODO: Replace the current MSE between ps3_l and ps3_g2l
+        self.mse = MSELossWithMargin(margin = 0.1)
 
         self.ensemble_conv = nn.Conv2d(128*4 * 2, numClass, kernel_size=3, stride=1, padding=1)
         nn.init.normal_(self.ensemble_conv.weight, mean=0, std=0.01)
@@ -477,6 +479,7 @@ class fpn(nn.Module):
 
             output = self.ensemble(ps3_l, ps3_g2l)
             # output = F.interpolate(output, imsize, mode='nearest')
+            
             return output, self.output_g, output_l, self.mse(ps3_l, ps3_g2l)
         else:
             # train local2global model

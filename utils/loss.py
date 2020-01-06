@@ -40,7 +40,7 @@ class FocalLoss(nn.Module):
         self.one_hot = one_hot
         self.ignore = ignore
 
-    def forward(self, input, target):
+    def forward(self, input, target, weight=None):
         '''
         only support ignore at 0
         '''
@@ -82,3 +82,17 @@ class SoftCrossEntropyLoss2d(nn.Module):
             loss += F.conv2d(inputs[range(index, index+1)], targets[range(index, index+1)])/(targets.size()[2] *
                                                                                              targets.size()[3])
         return loss
+
+class MSELossWithMargin(nn.Module):
+    def __init__(self, margin):
+        super(MSELossWithMargin, self).__init__()
+        self.margin = margin
+        
+    def forward(self, inputs, targets):
+        b, d, _, _ = inputs.shape
+        inputs = inputs.permute(0,2,3,1).contiguous().view(-1, d)
+        targets = targets.permute(0,2,3,1).contiguous().view(-1, d)
+        
+        loss = torch.mean(torch.abs(inputs - targets), dim=1)
+        loss -= self.margin
+        return loss[loss > 0].mean()

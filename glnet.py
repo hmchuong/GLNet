@@ -22,8 +22,8 @@ from utils.lovasz_losses import lovasz_softmax
 from utils.lr_scheduler import LR_Scheduler
 from utils.distributed import init_distributed_mode, MetricLogger, reduce_dict, SmoothedValue, save_on_master, is_main_process
 
-from engine import create_model_load_weights, get_optimizer, Trainer, Evaluator, collate
-from option import Options
+from engine.glnet import create_model_load_weights, get_optimizer, Trainer, Evaluator, collate
+from option.glnet import Options
 
 def prepare_dataset_loaders(dataset_name, data_path, batch_size, distributed):
 
@@ -118,7 +118,8 @@ def main(args):
     path_g = os.path.join(model_path, args.path_g)
     path_g2l = os.path.join(model_path, args.path_g2l)
     path_l2g = os.path.join(model_path, args.path_l2g)
-    model, global_fixed = create_model_load_weights(n_class, args.distributed, device, args.gpu, mode, evaluation, path_g=path_g, path_g2l=path_g2l, path_l2g=path_l2g)
+    
+    model, global_fixed = create_model_load_weights(n_class, args.distributed, device, getattr(args, 'gpu', 0), mode, evaluation, path_g=path_g, path_g2l=path_g2l, path_l2g=path_l2g)
 
     # Training config
     ###################################

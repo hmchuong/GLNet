@@ -1,11 +1,15 @@
 import os
-import torch.utils.data as data
+import random
+
+import cv2
 import numpy as np
 from PIL import Image, ImageFile
-import random
+
+import torch
+import torch.utils.data as data
+
 from torchvision.transforms import ToTensor
 from torchvision import transforms
-import cv2
 
 from .base import BaseDataset
 
@@ -55,6 +59,14 @@ class DeepGlobe(BaseDataset):
             image, label = self._transform(image, label)
             sample['image'] = image
             sample['label'] = label
+            
+        # Generate weights from label
+        label = np.array(sample['label'])
+        laplacian_label = cv2.Laplacian(label, cv2.CV_64F)
+        laplacian_label = (np.sum(laplacian_label.astype(np.uint8), axis=2) > 0).astype(np.float32)
+        laplacian_label[laplacian_label == 0] = 0.5
+        sample['weight'] = torch.from_numpy(laplacian_label)
+        
         return sample
 
     def _transform(self, image, label):

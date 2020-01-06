@@ -287,9 +287,6 @@ class Trainer(object):
         if self.mode == 1:
             # training with only (resized) global image #########################################
             outputs_global, _ = model.forward(images_glb, None, None, None)
-            #print(outputs_global.shape, labels_glb.shape)
-            #print(outputs_global, labels_glb)
-            #import pdb; pdb.set_trace()
             loss = self.criterion(outputs_global, labels_glb)
             loss.backward()
             self.optimizer.step()

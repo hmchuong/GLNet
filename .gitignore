@@ -126,3 +126,4 @@ venv.bak/
 .mypy_cache/
 prediction/
 *.zip
+Untitled.ipynb
