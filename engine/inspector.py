@@ -267,6 +267,7 @@ class Trainer(object):
         if self.training_level == -1:
             self.optimizer.zero_grad()
             loss = self.criterion(global_out, labels_glb.to(self.device))
+            loss.backward()
             self.optimizer.step()
             return loss
         

@@ -186,7 +186,7 @@ def main(args):
     model_without_ddp = model
     gpu = getattr(args, 'gpu', 0)
     if distributed:
-        model = DistributedDataParallel(model, device_ids=[gpu])
+        model = DistributedDataParallel(model, device_ids=[gpu], find_unused_parameters=True)
         model_without_ddp = model.module
         
     # Restore model
@@ -228,7 +228,7 @@ def main(args):
     
     best_score = 0.0
     print("Start training")
-    
+    non_improved_epoch = 0
     for epoch in range(num_epochs):
         if distributed:
             train_sampler.set_epoch(epoch)
@@ -242,10 +242,19 @@ def main(args):
         lr_scheduler.step()
         
         # Save model
-        if score > best_score and is_main_process():
+        if not is_main_process():
+            continue
+        
+        if score > best_score:
             best_score = score
             save_on_master(model_without_ddp.state_dict(), os.path.join(log_path, task_name + ".pth"))
-
+            non_improved_epoch = 0
+            continue
+        
+        non_improved_epoch += 1
+        if non_improved_epoch > args.early_stopping:
+            break
+            
 if __name__ == "__main__":
     args = Options().parse()
     init_distributed_mode(args)

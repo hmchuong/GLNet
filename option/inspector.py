@@ -30,7 +30,7 @@ class Options():
         parser.add_argument('--training_level', type=int, help='training level (-1 is global only)')
         parser.add_argument('--level_decay', type=float, default=0, help='learning rate decayed through branches')
         parser.add_argument('--lr', type=float, default=1e-3, help='learning rate')
-        parser.add_argument('--reduce_factor', type=float, default=0.1, help='learning rate decay factor')
+        parser.add_argument('--reduce_factor', type=float, default=0.2, help='learning rate decay factor')
         parser.add_argument('--reduce_step_size', type=int, default=50, help=' rate decay factor')
         parser.add_argument('--lamb_fmreg', type=float, default=0.15, help='loss weight feature map regularization')
         parser.add_argument('--reg_margin', type=float, default=0.05, help='margin of regularization')

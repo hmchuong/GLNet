@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 from torchvision.models.segmentation import fcn_resnet50
+from .unet import Unet
 import numpy as np
 
 class ResnetFPN(nn.Module):
@@ -87,14 +88,14 @@ class FCNResnet50(nn.Module):
         
     def forward(self, images):
         return self.net(images)['out']
-
+Net = Unet
 class LocalRefinement(nn.Module):
     """ Network refining the larger prediction with local information
     """
     
     def __init__(self, num_classes):
         super(LocalRefinement, self).__init__()
-        self.backbone = FCNResnet50(num_classes)
+        self.backbone = Net(num_classes)
         self.refinement = nn.Conv2d(2 * num_classes, num_classes, kernel_size=3, stride=1, padding=1)
     
     def forward(self, images, previous_prediction):
@@ -130,7 +131,7 @@ class InspectorNet(nn.Module):
     def __init__(self, num_classes, num_scaling_level):
         super(InspectorNet, self).__init__()
         
-        self.global_branch = FCNResnet50(num_classes)
+        self.global_branch = Net(num_classes)
         self.num_scaling_level = num_scaling_level
         
         for i in range(num_scaling_level):
@@ -167,9 +168,8 @@ class InspectorNet(nn.Module):
             current_lr *= decay_rate
         if current_lr != 0:
             params.append({'params': self.global_branch.parameters(), 'lr': current_lr})
-        else:
-            for p in self.global_branch.parameters():
-                p.requires_grad = (current_lr > 0)
+        for p in self.global_branch.parameters():
+            p.requires_grad = (current_lr > 0)
         return params
         
     def forward_global(self, images, **kargs):
