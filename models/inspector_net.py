@@ -88,7 +88,7 @@ class FCNResnet50(nn.Module):
         
     def forward(self, images):
         return self.net(images)['out']
-Net = Unet
+Net = FCNResnet50
 class LocalRefinement(nn.Module):
     """ Network refining the larger prediction with local information
     """
