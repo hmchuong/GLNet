@@ -191,8 +191,12 @@ def main(args):
         
     # Restore model
     if os.path.isfile(args.restore_path):
+        print("Restoring...")
         state = torch.load(args.restore_path, map_location='cpu')
         model_without_ddp.load_state_dict(state)
+        if not evaluation and args.training_level != -1:
+            model_without_ddp.copy_weight(args.training_level - 1, args.training_level)
+            print("Copy weight from previous training branch...")
     
     # Create logger
     writer = None
