@@ -137,6 +137,14 @@ class InspectorNet(nn.Module):
         for i in range(num_scaling_level):
             self.add_module("local_branch_"+str(i), LocalRefinement(num_classes))
             
+    def copy_weight(self, source_level, dest_level):
+        if source_level == -1:
+            source_state_dict = self.global_branch.state_dict()
+            getattr(self, "local_branch_"+str(dest_level)).backbone.load_state_dict(source_state_dict)
+        else:
+            source_state_dict = getattr(self, "local_branch_"+str(source_level)).state_dict()
+            getattr(self, "local_branch_"+str(dest_level)).load_state_dict(source_state_dict)
+            
     def get_training_parameters(self, training_level, decay_rate=0, learning_rate=1e-3):
         """ Training parameters for optimize
         
@@ -164,9 +172,11 @@ class InspectorNet(nn.Module):
             for p in local_branch.parameters():
                 p.requires_grad = (current_lr > 0)
             if current_lr != 0:
+                print("Optimize level", i)
                 params.append({'params': local_branch.parameters(), 'lr': current_lr})
             current_lr *= decay_rate
         if current_lr != 0:
+            print("Optimize global")
             params.append({'params': self.global_branch.parameters(), 'lr': current_lr})
         for p in self.global_branch.parameters():
             p.requires_grad = (current_lr > 0)

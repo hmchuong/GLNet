@@ -146,10 +146,12 @@ def slice(images,  p_size):
 def patches2global(patches, out_size, patch_size, coordinates, templates):
     temp_out = torch.zeros(out_size)
     patches = F.interpolate(patches, size=patch_size, mode='bilinear')
+    i = 0
     for coord, patch in zip(coordinates, patches):
-        top = int(coord[0]) * out_size[0]
-        left = int(coord[1]) * out_size[1]
+        top = int(coord[0] * out_size[1])
+        left = int(coord[1] * out_size[2])
         temp_out[:, top: top + patch_size[0], left: left + patch_size[1]] += patch
+        i += 1
     temp_out /= templates.squeeze(0)
     return temp_out
 
@@ -197,11 +199,10 @@ class Trainer(object):
         
         # Calculate loss if current training level
         if sub_backward:
-            self.optimizer.zero_grad()
+            
             loss = (1 - self.lamb_reg) * self.criterion(patch_predictions, label_patches_var.to(self.device), weight_patches_var.to(self.device)) \
                 + self.lamb_reg * self.reg_loss_fn(patch_predictions, out_patches_var.to(self.device))
             loss.backward(retain_graph=retain_graph)
-            self.optimizer.step()
 
         # Update back to output_patches
         patch_predictions.require_grad = False
@@ -242,7 +243,8 @@ class Trainer(object):
                 
             # Update output_patches back to out
             out[i] = patches2global(out_patches[i], out.shape[1:], patch_size, coordinates[i], templates[i])
-        
+        self.optimizer.step()
+        self.optimizer.zero_grad()
         return out, loss
             
     
@@ -367,7 +369,6 @@ class Evaluator(object):
             # For each local branch
             for level in range(self.eval_level + 1):
                 out = self.infer_one_level(model, (self.patch_sizes[level], self.patch_sizes[level]), images, out, level)
-            
             out = torch.softmax(out, dim=1).argmax(1).numpy()
             labels = sample['label'] # PIL images
             labels_npy = masks_transform(labels, self.rgb2class, numpy=True)

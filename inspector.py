@@ -59,8 +59,8 @@ def prepare_dataset_loaders(dataset_name, data_path, batch_size, distributed, wo
 
     # Create datasets
     dataset_train = Dataset(train_data_path, train_ids, label=True, transform=True)
-    dataset_val = Dataset(val_data_path, val_ids[:10], label=True)
-    dataset_test = Dataset(test_data_path, test_ids[:10], label=True)
+    dataset_val = Dataset(val_data_path, val_ids, label=True)
+    dataset_test = Dataset(test_data_path, test_ids, label=True)
 
     # Create dataset sampler
     if distributed:
@@ -191,8 +191,12 @@ def main(args):
         
     # Restore model
     if os.path.isfile(args.restore_path):
+        print("Restoring...")
         state = torch.load(args.restore_path, map_location='cpu')
         model_without_ddp.load_state_dict(state)
+        if not evaluation and args.training_level != -1:
+            model_without_ddp.copy_weight(args.training_level - 1, args.training_level)
+            print("Copy weight from previous training branch...")
     
     # Create logger
     writer = None
