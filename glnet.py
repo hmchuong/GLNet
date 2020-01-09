@@ -25,6 +25,9 @@ from utils.distributed import init_distributed_mode, MetricLogger, reduce_dict, 
 from engine.glnet import create_model_load_weights, get_optimizer, Trainer, Evaluator, collate
 from option.glnet import Options
 
+import multiprocessing
+multiprocessing.set_start_method('spawn', True)
+
 def prepare_dataset_loaders(dataset_name, data_path, batch_size, distributed):
 
     print("preparing datasets and dataloaders......")
@@ -118,7 +121,9 @@ def main(args):
     path_g = os.path.join(model_path, args.path_g)
     path_g2l = os.path.join(model_path, args.path_g2l)
     path_l2g = os.path.join(model_path, args.path_l2g)
-    
+    print(path_g)
+    print(path_g2l)
+    print(path_l2g)
     model, global_fixed = create_model_load_weights(n_class, args.distributed, device, getattr(args, 'gpu', 0), mode, evaluation, path_g=path_g, path_g2l=path_g2l, path_l2g=path_l2g)
 
     # Training config
@@ -184,7 +189,7 @@ def main(args):
             header = 'Test:'
             
             if test: data_loader = dataloader_test
-            else: data_loader = dataloader_val
+            else: data_loader = dataloader_test
             
             for i_batch, sample_batched in enumerate(metric_logger.log_every(data_loader, 1, header)):
                 torch.cuda.synchronize()
