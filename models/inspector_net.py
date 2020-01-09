@@ -56,7 +56,7 @@ class ResnetFPN(nn.Module):
         return F.interpolate(x, size=(H, W), **self._up_kwargs) + y
 
     def forward(self, image):
-        
+        _, _, H, W = image.shape
         c2, c3, c4, c5 = self.resnet_backbone(image)
         # Top-down
         p5 = self.toplayer(c5)
@@ -78,7 +78,9 @@ class ResnetFPN(nn.Module):
         # Classify
         ps3 = self._concatenate(p5, p4, p3, p2)
         output = self.classify(ps3)
-
+        
+        output = F.interpolate(output, size=(H, W), **self._up_kwargs)
+        
         return output
     
 class FCNResnet50(nn.Module):
@@ -88,6 +90,7 @@ class FCNResnet50(nn.Module):
         
     def forward(self, images):
         return self.net(images)['out']
+
 Net = ResnetFPN
 class LocalRefinement(nn.Module):
     """ Network refining the larger prediction with local information
