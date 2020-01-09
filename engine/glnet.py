@@ -191,7 +191,7 @@ def create_model_load_weights(n_class, distributed, device, gpu, mode=1, evaluat
         partial = torch.load(path_g, map_location='cpu')
         state = glob_without_ddp.state_dict()
         # 1. filter out unnecessary keys
-        pretrained_dict = {k: v for k, v in partial.items() if k in state and "local" not in k}
+        pretrained_dict = {k.replace("module.", ""): v for k, v in partial.items() if k.replace("module.", "") in state and "local" not in k}
         # 2. overwrite entries in the existing state dict
         state.update(pretrained_dict)
         # 3. load the new state dict
@@ -202,7 +202,7 @@ def create_model_load_weights(n_class, distributed, device, gpu, mode=1, evaluat
         partial = torch.load(path_l2g, map_location='cpu')
         state = model_without_ddp.state_dict()
         # 1. filter out unnecessary keys
-        pretrained_dict = {k: v for k, v in partial.items() if k in state}# and "global" not in k}
+        pretrained_dict = {k.replace("module.", ""): v for k, v in partial.items() if k.replace("module.", "") in state}# and "global" not in k}
         # 2. overwrite entries in the existing state dict
         state.update(pretrained_dict)
         # 3. load the new state dict
