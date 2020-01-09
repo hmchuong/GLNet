@@ -8,7 +8,7 @@ import numpy as np
 
 class ResnetFPN(nn.Module):
     def __init__(self, numClass):
-        super(fpn_module_global, self).__init__()
+        super(ResnetFPN, self).__init__()
         self.resnet_backbone = resnet50(True)
         self._up_kwargs = {'mode': 'bilinear'}
         # Top layer
@@ -88,7 +88,7 @@ class FCNResnet50(nn.Module):
         
     def forward(self, images):
         return self.net(images)['out']
-Net = FCNResnet50
+Net = ResnetFPN
 class LocalRefinement(nn.Module):
     """ Network refining the larger prediction with local information
     """
