@@ -181,7 +181,7 @@ def main(args):
     device = args.device
     distributed = args.distributed
     
-    model = InspectorNet(args.n_class, args.num_scaling_level)
+    model = InspectorNet(args.n_class, args.num_scaling_level, args.backbone)
     model = model.to(device)
     model_without_ddp = model
     gpu = getattr(args, 'gpu', 0)
