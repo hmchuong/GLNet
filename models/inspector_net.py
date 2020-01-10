@@ -8,7 +8,7 @@ import numpy as np
 
 class ResnetFPN(nn.Module):
     def __init__(self, numClass):
-        super(fpn_module_global, self).__init__()
+        super(ResnetFPN, self).__init__()
         self.resnet_backbone = resnet50(True)
         self._up_kwargs = {'mode': 'bilinear'}
         # Top layer
@@ -91,15 +91,13 @@ class FCNResnet50(nn.Module):
     def forward(self, images):
         return self.net(images)['out']
 
-Net = FCNResnet50
-
 class LocalRefinement(nn.Module):
     """ Network refining the larger prediction with local information
     """
     
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, BackBoneNet):
         super(LocalRefinement, self).__init__()
-        self.backbone = Net(num_classes)
+        self.backbone = BackBoneNet(num_classes)
         self.refinement = nn.Conv2d(2 * num_classes, num_classes, kernel_size=3, stride=1, padding=1)
     
     def forward(self, images, previous_prediction):
@@ -128,18 +126,27 @@ class LocalRefinement(nn.Module):
         
         return refinement_prediction
     
+def get_backbone_class(backbone_str):
+    if backbone_str == "resnet_fpn":
+        return ResnetFPN
+    elif backbone_str == "unet":
+        return Unet
+    elif backbone_str == "fcn":
+        return FCNResnet50
+    
 class InspectorNet(nn.Module):
     """ Network combining between global and local context
     """
     
-    def __init__(self, num_classes, num_scaling_level):
+    def __init__(self, num_classes, num_scaling_level, backbone):
         super(InspectorNet, self).__init__()
         
-        self.global_branch = Net(num_classes)
+        BackBoneNet = get_backbone_class(backbone)
+        self.global_branch = BackBoneNet(num_classes)
         self.num_scaling_level = num_scaling_level
         
         for i in range(num_scaling_level):
-            self.add_module("local_branch_"+str(i), LocalRefinement(num_classes))
+            self.add_module("local_branch_"+str(i), LocalRefinement(num_classes, BackBoneNet))
             
     def copy_weight(self, source_level, dest_level):
         if source_level == -1:
