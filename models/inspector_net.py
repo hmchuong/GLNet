@@ -149,12 +149,12 @@ class InspectorNet(nn.Module):
             self.add_module("local_branch_"+str(i), LocalRefinement(num_classes, BackBoneNet))
             
     def copy_weight(self, source_level, dest_level):
-        if source_level == -1:
-            source_state_dict = self.global_branch.state_dict()
-            getattr(self, "local_branch_"+str(dest_level)).backbone.load_state_dict(source_state_dict)
-        else:
-            source_state_dict = getattr(self, "local_branch_"+str(source_level)).state_dict()
-            getattr(self, "local_branch_"+str(dest_level)).load_state_dict(source_state_dict)
+        # if source_level == -1:
+        source_state_dict = self.global_branch.state_dict()
+        getattr(self, "local_branch_"+str(dest_level)).backbone.load_state_dict(source_state_dict)
+        # else:
+        #     source_state_dict = getattr(self, "local_branch_"+str(source_level)).state_dict()
+        #     getattr(self, "local_branch_"+str(dest_level)).load_state_dict(source_state_dict)
             
     def get_training_parameters(self, training_level, decay_rate=0, learning_rate=1e-3):
         """ Training parameters for optimize

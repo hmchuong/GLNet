@@ -223,7 +223,7 @@ def main(args):
     optimizer = torch.optim.Adam(params)
     print("Number of training parameters:", sum(p.numel() for p in model_without_ddp.parameters() if p.requires_grad))
     
-    criterion = FocalLoss(gamma=3)
+    criterion = FocalLoss(gamma=3, add_weight=args.add_weight)
     reg_loss = MSELossWithMargin(margin=args.reg_margin)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.reduce_step_size, gamma=args.reduce_factor)
     

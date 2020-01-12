@@ -32,13 +32,14 @@ def one_hot(index, classes):
 
 class FocalLoss(nn.Module):
 
-    def __init__(self, gamma=0, eps=1e-7, size_average=True, one_hot=True, ignore=None):
+    def __init__(self, gamma=0, eps=1e-7, size_average=True, one_hot=True, ignore=None, add_weight=False):
         super(FocalLoss, self).__init__()
         self.gamma = gamma
         self.eps = eps
         self.size_average = size_average
         self.one_hot = one_hot
         self.ignore = ignore
+        self.add_weight = add_weight
 
     def forward(self, input, target, weight=None):
         '''
@@ -46,6 +47,7 @@ class FocalLoss(nn.Module):
         '''
         B, C, H, W = input.size()
         input = input.permute(0, 2, 3, 1).contiguous().view(-1, C)  # B * H * W, C = P, C
+        weight = weight.contiguous().view(-1)
         target = target.view(-1)
         if self.ignore is not None:
             valid = (target != self.ignore)
@@ -63,7 +65,9 @@ class FocalLoss(nn.Module):
         batch_loss = -(torch.pow((1 - probs), self.gamma)) * log_p
         # print('-----bacth_loss------')
         # print(batch_loss)
-
+        if self.add_weight:
+            batch_loss *= weight
+            
         if self.size_average:
             loss = batch_loss.mean()
         else:
