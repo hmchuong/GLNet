@@ -181,7 +181,7 @@ def main(args):
     device = args.device
     distributed = args.distributed
     
-    model = InspectorNet(args.n_class, args.num_scaling_level, args.backbone)
+    model = InspectorNet(args.n_class, args.num_scaling_level, backbone=args.backbone, attention=args.attention)
     model = model.to(device)
     model_without_ddp = model
     gpu = getattr(args, 'gpu', 0)
@@ -193,7 +193,7 @@ def main(args):
     if os.path.isfile(args.restore_path):
         print("Restoring...")
         state = torch.load(args.restore_path, map_location='cpu')
-        model_without_ddp.load_state_dict(state)
+        model_without_ddp.load_state_dict(state, strict=False)
         if not evaluation and args.training_level != -1:
             model_without_ddp.copy_weight(args.training_level - 1, args.training_level)
             print("Copy weight from previous training branch...")

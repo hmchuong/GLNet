@@ -91,6 +91,47 @@ class FCNResnet50(nn.Module):
     def forward(self, images):
         return self.net(images)['out']
 
+def conv_block(in_channels, out_channels):
+    return nn.Sequential(
+        nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1),
+        nn.BatchNorm2d(out_channels),
+        nn.ReLU(inplace=True)
+    )
+        
+class LocalRefinementAttention(nn.Module):
+    def __init__(self, num_classes, BackBoneNet):
+        super(LocalRefinementAttention, self).__init__()
+        self.att_conv = conv_block(num_classes, 3)
+        self.input_conv = conv_block(3, 3)
+        self.backbone = BackBoneNet(num_classes)
+    
+    def forward(self, images, previous_prediction):
+        """ Predict patch and combine with previous prediction
+        
+        Parameters
+        ----------
+        images: tensor (batch, 3, h, w)
+            patch images
+        previous_prediction: tensor (batch, num_classes, h, w)
+            previous prediction
+        
+        Returns
+        -------
+        tensor (batch, num_classes, h, w)
+            refinement patch prediction
+        """
+        # Extract feature from z
+        patch_z = self.input_conv(images)
+        patch_att = self.att_conv(previous_prediction)
+        
+        # Attention z
+        patch_inp = patch_z + patch_att
+        
+        # Prediction
+        pred = self.backbone(patch_inp)
+        
+        return pred
+
 class LocalRefinement(nn.Module):
     """ Network refining the larger prediction with local information
     """
@@ -138,15 +179,17 @@ class InspectorNet(nn.Module):
     """ Network combining between global and local context
     """
     
-    def __init__(self, num_classes, num_scaling_level, backbone):
+    def __init__(self, num_classes, num_scaling_level, backbone, attention=False):
         super(InspectorNet, self).__init__()
         
         BackBoneNet = get_backbone_class(backbone)
         self.global_branch = BackBoneNet(num_classes)
         self.num_scaling_level = num_scaling_level
         
+        LocalNet = LocalRefinementAttention if attention else LocalRefinement
+        
         for i in range(num_scaling_level):
-            self.add_module("local_branch_"+str(i), LocalRefinement(num_classes, BackBoneNet))
+            self.add_module("local_branch_"+str(i), LocalNet(num_classes, BackBoneNet))
             
     def copy_weight(self, source_level, dest_level):
         # if source_level == -1:
