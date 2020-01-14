@@ -91,16 +91,85 @@ class FCNResnet50(nn.Module):
     def forward(self, images):
         return self.net(images)['out']
 
-def conv_block(in_channels, out_channels):
-    return nn.Sequential(
-        nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1),
-        nn.BatchNorm2d(out_channels),
-        nn.ReLU(inplace=True)
-    )
+def conv_block(in_channels, out_channels, n=1):
+    blocks = []
+    for i in range(n):
+        blocks += [nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1),
+                    nn.BatchNorm2d(out_channels),
+                    nn.ReLU(inplace=True)]
+    return nn.Sequential(*blocks)
         
-class LocalRefinementAttention(nn.Module):
+class LocalRefinement3(nn.Module):
     def __init__(self, num_classes, BackBoneNet):
-        super(LocalRefinementAttention, self).__init__()
+        super(LocalRefinement3, self).__init__()
+        self.refinement = conv_block(num_classes, num_classes, 5)
+        self.last_conv = nn.Conv2d(num_classes, num_classes, kernel_size=3, stride=1, padding=1)
+        self.backbone = BackBoneNet(num_classes)
+    
+    def forward(self, images, previous_prediction):
+        """ Predict patch and combine with previous prediction
+        
+        Parameters
+        ----------
+        images: tensor (batch, 3, h, w)
+            patch images
+        previous_prediction: tensor (batch, num_classes, h, w)
+            previous prediction
+        
+        Returns
+        -------
+        tensor (batch, num_classes, h, w)
+            refinement patch prediction
+        """
+        # Extract feature from z
+        patch_z = self.backbone(images)
+        residual_glob = self.refinement(previous_prediction)
+        
+        # Attention z
+        y = patch_z + residual_glob
+        
+        # Prediction
+        pred = self.last_conv(y)
+        
+        return pred
+    
+class LocalRefinement4(nn.Module):
+    def __init__(self, num_classes, BackBoneNet):
+        super(LocalRefinement4, self).__init__()
+        self.attention = conv_block(num_classes, num_classes, 5)
+        self.last_conv = nn.Conv2d(num_classes, num_classes, kernel_size=3, stride=1, padding=1)
+        self.backbone = BackBoneNet(num_classes)
+    
+    def forward(self, images, previous_prediction):
+        """ Predict patch and combine with previous prediction
+        
+        Parameters
+        ----------
+        images: tensor (batch, 3, h, w)
+            patch images
+        previous_prediction: tensor (batch, num_classes, h, w)
+            previous prediction
+        
+        Returns
+        -------
+        tensor (batch, num_classes, h, w)
+            refinement patch prediction
+        """
+        # Extract feature from z
+        patch_z = self.backbone(images)
+        attention_glob = self.attention(previous_prediction)
+        
+        # Attention z
+        g = patch_z * torch.sigmoid(attention_glob)
+        
+        # Prediction
+        pred = self.last_conv(g + previous_prediction)
+        
+        return pred
+    
+class LocalRefinement2(nn.Module):
+    def __init__(self, num_classes, BackBoneNet):
+        super(LocalRefinement2, self).__init__()
         self.att_conv = conv_block(num_classes, 3)
         self.input_conv = conv_block(3, 3)
         self.backbone = BackBoneNet(num_classes)
@@ -132,12 +201,12 @@ class LocalRefinementAttention(nn.Module):
         
         return pred
 
-class LocalRefinement(nn.Module):
+class LocalRefinement1(nn.Module):
     """ Network refining the larger prediction with local information
     """
     
     def __init__(self, num_classes, BackBoneNet):
-        super(LocalRefinement, self).__init__()
+        super(LocalRefinement1, self).__init__()
         self.backbone = BackBoneNet(num_classes)
         self.refinement = nn.Conv2d(2 * num_classes, num_classes, kernel_size=3, stride=1, padding=1)
     
@@ -179,14 +248,14 @@ class InspectorNet(nn.Module):
     """ Network combining between global and local context
     """
     
-    def __init__(self, num_classes, num_scaling_level, backbone, attention=False):
+    def __init__(self, num_classes, num_scaling_level, backbone, refinement=0):
         super(InspectorNet, self).__init__()
         
         BackBoneNet = get_backbone_class(backbone)
         self.global_branch = BackBoneNet(num_classes)
         self.num_scaling_level = num_scaling_level
         
-        LocalNet = LocalRefinementAttention if attention else LocalRefinement
+        LocalNet = eval("LocalRefinement{}".format(refinement))
         
         for i in range(num_scaling_level):
             self.add_module("local_branch_"+str(i), LocalNet(num_classes, BackBoneNet))
@@ -230,7 +299,6 @@ class InspectorNet(nn.Module):
                 params.append({'params': local_branch.parameters(), 'lr': current_lr})
             current_lr *= decay_rate
         if current_lr != 0:
-            print("Optimize global")
             params.append({'params': self.global_branch.parameters(), 'lr': current_lr})
         for p in self.global_branch.parameters():
             p.requires_grad = (current_lr > 0)

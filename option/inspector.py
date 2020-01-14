@@ -12,7 +12,7 @@ class Options():
         # For model
         parser.add_argument('--n_class', type=int, default=2, help='segmentation classes')
         parser.add_argument('--backbone', type=str, default='resnet_fpn', help='backbone network')
-        parser.add_argument('--attention', action='store_true', default=False, help='use attention on local branches')
+        parser.add_argument('--refinement', type=int, default=1, help='local refinement network')
         parser.add_argument('--num_scaling_level', type=int, default=3, help='number of scaling level')
         parser.add_argument('--restore_path', type=str, default="", help='name for global model path')
         

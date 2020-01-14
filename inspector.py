@@ -25,6 +25,9 @@ from option.inspector import Options
 from utils.distributed import init_distributed_mode, is_main_process, MetricLogger, SmoothedValue, save_on_master
 from utils.loss import FocalLoss, MSELossWithMargin
 
+import torch
+torch.manual_seed(2020)
+
 def prepare_dataset_loaders(dataset_name, data_path, batch_size, distributed, workers, **args):
     """ Prepare dataset loaders
     
