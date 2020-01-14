@@ -18,8 +18,8 @@
 # --workers 10 --world-size 6
 
 # Train local 0
-export CUDA_VISIBLE_DEVICES=0,2
-python -m torch.distributed.launch --nproc_per_node=2 --use_env inspector.py \
+export CUDA_VISIBLE_DEVICES=0,1,2
+python -m torch.distributed.launch --nproc_per_node=3 --use_env inspector.py \
 --dataset_name "DeepGlobe" \
 --data_path "/vinai/chuonghm/deep_globe" \
 --n_class 7 \
@@ -35,11 +35,12 @@ python -m torch.distributed.launch --nproc_per_node=2 --use_env inspector.py \
 --origin_size 2448 \
 --training_level 0 \
 --level_decay 0 \
+--add_weight \
 --reduce_step_size 10 \
 --early_stopping 50 \
 --num_epochs 100 \
 --dist-url "env://" \
---workers 10 --world-size 2
+--workers 10 --world-size 3
 
 # Train local 1
 # export CUDA_VISIBLE_DEVICES=1,5,7
