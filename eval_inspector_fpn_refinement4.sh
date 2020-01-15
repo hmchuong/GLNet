@@ -8,8 +8,9 @@ python inspector.py \
 --backbone resnet_fpn \
 --num_scaling_level 4 \
 --refinement 4 \
+--supervision \
 --log_path "/vinai/chuonghm/inspector/logs" \
---task_name "eval_inspector_deepglobe_local0_resnetfpn_refinement4_weight_reg_1" \
+--task_name "eval_inspector_deepglobe_local0_resnetfpn_refinement4_weight_reg_supervision" \
 --restore_path "/vinai/chuonghm/inspector/logs/inspector_deepglobe_local0_resnetfpn_refinement4_weight_reg_1/inspector_deepglobe_local0_resnetfpn_refinement4_weight_reg_1.pth" \
 --batch_size 6 \
 --sub_batch_size 6 \

@@ -36,6 +36,7 @@ class Options():
         parser.add_argument('--reduce_step_size', type=int, default=50, help=' rate decay factor')
         parser.add_argument('--lamb_fmreg', type=float, default=0.15, help='loss weight feature map regularization')
         parser.add_argument('--add_weight',action='store_true', default=False, help='evaluation only')
+        parser.add_argument('--supervision',action='store_true', default=False, help='supervision on local branch')
         parser.add_argument('--reg_margin', type=float, default=0.05, help='margin of regularization')
         parser.add_argument('--early_stopping', type=int, default=100, help='number of epochs for early stopping')
         parser.add_argument('--num_epochs', type=int, default=1000, help='number of maximum training epochs')

@@ -18,15 +18,16 @@
 # --workers 10 --world-size 4
 
 # Train local 0
-export CUDA_VISIBLE_DEVICES=0,2,3,4
-python -m torch.distributed.launch --nproc_per_node=4 --use_env inspector.py \
+export CUDA_VISIBLE_DEVICES=0,2,3,4,6
+python -m torch.distributed.launch --nproc_per_node=5 --use_env inspector.py \
 --dataset_name "DeepGlobe" \
 --data_path "/vinai/chuonghm/deep_globe" \
 --n_class 7 \
 --num_scaling_level 3 \
 --refinement 3 \
+--supervision \
 --log_path "/vinai/chuonghm/inspector/logs" \
---task_name "inspector_deepglobe_local0_resnetfpn_refinement3_weight_reg" \
+--task_name "inspector_deepglobe_local0_resnetfpn_refinement3_weight_reg_supervision" \
 --restore_path "/vinai/chuonghm/inspector/logs/inspector_deepglobe_global_resnetfpn/inspector_deepglobe_global_resnetfpn.pth" \
 --batch_size 8 \
 --sub_batch_size 8 \
@@ -42,7 +43,7 @@ python -m torch.distributed.launch --nproc_per_node=4 --use_env inspector.py \
 --add_weight \
 --attention \
 --dist-url "tcp://127.0.0.1:1240" \
---workers 10 --world-size 4
+--workers 10 --world-size 5
 
 # Train local 1
 # export CUDA_VISIBLE_DEVICES=2,3,5,6

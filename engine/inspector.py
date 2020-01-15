@@ -157,7 +157,7 @@ def patches2global(patches, out_size, patch_size, coordinates, templates):
 
 class Trainer(object):
     
-    def __init__(self, device, optimizer, criterion, reg_loss_fn, lamb_reg, training_level, rescale_size, origin_size, patch_sizes, sub_batch_size, rgb2class):
+    def __init__(self, device, optimizer, criterion, reg_loss_fn, lamb_reg, training_level, rescale_size, origin_size, patch_sizes, sub_batch_size, rgb2class, supervision=False):
         super(Trainer, self).__init__()
         
         self.device = device
@@ -172,6 +172,7 @@ class Trainer(object):
         self.origin_size = origin_size
         self.patch_sizes = patch_sizes
         self.sub_batch_size = sub_batch_size
+        self.supervision = supervision
     
     def train_sub_batches(self, model, patches, label_patches, out_patches, weight_patches, sub_backward, retain_graph, level):
         
@@ -195,19 +196,21 @@ class Trainer(object):
             "level": level
         }
         
-        patch_predictions = model(**params)
+        local_predictions, aggre_predictions = model(**params)
         
         # Calculate loss if current training level
         if sub_backward:
             
-            loss = (1 - self.lamb_reg) * self.criterion(patch_predictions, label_patches_var.to(self.device), weight_patches_var.to(self.device)) \
-                + self.lamb_reg * self.reg_loss_fn(patch_predictions, out_patches_var.to(self.device))
+            loss = (1 - self.lamb_reg) * self.criterion(aggre_predictions, label_patches_var.to(self.device), weight_patches_var.to(self.device)) \
+                + self.lamb_reg * self.reg_loss_fn(aggre_predictions, out_patches_var.to(self.device))
+            if self.supervision and local_predictions is not None:
+                loss += self.criterion(local_predictions, label_patches_var.to(self.device), None)
             loss.backward(retain_graph=retain_graph)
 
         # Update back to output_patches
-        patch_predictions.require_grad = False
-        patch_predictions = patch_predictions.detach()
-        return patch_predictions, loss
+        aggre_predictions.require_grad = False
+        aggre_predictions = aggre_predictions.detach()
+        return aggre_predictions, loss
         
     def train_one_level(self, model, patch_size, images, labels, weights, out, sub_backward, training_level):
             
@@ -291,6 +294,7 @@ class Evaluator(object):
         self.device = device
         self.eval_level = eval_level
         self.metric = ConfusionMatrix(num_classes)
+        self.local_metric = ConfusionMatrix(num_classes)
         self.rescale_size = rescaled_size
         self.origin_size = origin_size
         self.patch_sizes = patch_sizes
@@ -311,9 +315,9 @@ class Evaluator(object):
             "previous_prediction": out_patches_var.to(self.device),
             "level": level
         }
-        patch_predictions = model(**params)
+        local_predictions, aggre_predictions = model(**params)
 
-        return patch_predictions
+        return local_predictions, aggre_predictions
         
     def infer_one_level(self, model, patch_size, images, out, training_level):
             
@@ -325,27 +329,34 @@ class Evaluator(object):
         out_patches, _, _, _, _ = slice(out, patch_size)
         out_patches = [F.interpolate(torch.stack(out_list, dim=0), size=self.rescale_size, mode='bilinear') for out_list in out_patches]
         
+        out_local = out.clone()
+        out_local_patches, _, _, _, _ = slice(out, patch_size)
+        out_local_patches = [F.interpolate(torch.stack(out_list, dim=0), size=self.rescale_size, mode='bilinear') for out_list in out_local_patches]
+            
         for i in range(len(images)):
             j = 0
             while j < len(coordinates[i]):
-                patch_predictions = self.infer_sub_batches(model, \
-                                                                patches[i][j : j+self.sub_batch_size], \
-                                                                out_patches[i][j : j+self.sub_batch_size], \
-                                                                training_level)
+                local_predictions, patch_predictions = self.infer_sub_batches(model, \
+                                                            patches[i][j : j+self.sub_batch_size], \
+                                                            out_patches[i][j : j+self.sub_batch_size], \
+                                                            training_level)
                 out_patches[i][j : j+self.sub_batch_size] = patch_predictions.to("cpu")
+                out_local_patches[i][j : j+self.sub_batch_size] = local_predictions.to("cpu")
                 j += self.sub_batch_size
                 
             # Update output_patches back to out
             out[i] = patches2global(out_patches[i], out.shape[1:], patch_size, coordinates[i], templates[i])
-        
-        return out
+            out_local[i] = patches2global(out_local_patches[i], out.shape[1:], patch_size, coordinates[i], templates[i])
+        return out_local, out
     
     def get_scores(self):
         self.metric.synchronize_between_processes()
-        return self.metric.get_scores()
+        self.local_metric.synchronize_between_processes()
+        return {'aggregate': self.metric.get_scores(), 'local': self.local_metric.get_scores()}
 
     def reset_metrics(self):
         self.metric.reset()
+        self.local_metric.reset()
     
     def eval(self, sample, model):
         model_no_ddp = model
@@ -365,15 +376,19 @@ class Evaluator(object):
             }
             global_out = model(**params)
             out = F.interpolate(global_out, size=self.origin_size, mode='bilinear').to("cpu")
+            out_local = F.interpolate(global_out, size=self.origin_size, mode='bilinear').to("cpu")
             
             # For each local branch
             for level in range(self.eval_level + 1):
-                out = self.infer_one_level(model, (self.patch_sizes[level], self.patch_sizes[level]), images, out, level)
+                out_local, out = self.infer_one_level(model, (self.patch_sizes[level], self.patch_sizes[level]), images, out, level)
             out = torch.softmax(out, dim=1).argmax(1).numpy()
             labels = sample['label'] # PIL images
             labels_npy = masks_transform(labels, self.rgb2class, numpy=True)
             self.metric.update(labels_npy, out)
             
-            return out
+            out_local = torch.softmax(out_local, dim=1).argmax(1).numpy()
+            self.local_metric.update(labels_npy, out_local)
+                
+            return out_local, out
             
         

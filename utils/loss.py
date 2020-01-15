@@ -47,7 +47,8 @@ class FocalLoss(nn.Module):
         '''
         B, C, H, W = input.size()
         input = input.permute(0, 2, 3, 1).contiguous().view(-1, C)  # B * H * W, C = P, C
-        weight = weight.contiguous().view(-1)
+        if weight is not None: 
+            weight = weight.contiguous().view(-1)
         target = target.view(-1)
         if self.ignore is not None:
             valid = (target != self.ignore)
@@ -65,7 +66,7 @@ class FocalLoss(nn.Module):
         batch_loss = -(torch.pow((1 - probs), self.gamma)) * log_p
         # print('-----bacth_loss------')
         # print(batch_loss)
-        if self.add_weight:
+        if self.add_weight and weight is not None:
             batch_loss *= weight
             
         if self.size_average:
