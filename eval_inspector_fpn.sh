@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 # Eval global
-=======
-# Train global
->>>>>>> [UPDATE] train fcn
 # export CUDA_VISIBLE_DEVICES=1
 # python inspector.py \
 # --evaluation \
@@ -24,7 +20,6 @@
 # --level_decay 0 \
 # --workers 10
 
-<<<<<<< HEAD
 # Eval local 0
 # export CUDA_VISIBLE_DEVICES=2
 # python inspector.py \
@@ -69,9 +64,6 @@
 # --level_decay 0 \
 # --workers 10
 
-=======
-# Train local 1
->>>>>>> [UPDATE] train fcn
 export CUDA_VISIBLE_DEVICES=1
 python inspector.py \
 --evaluation \
