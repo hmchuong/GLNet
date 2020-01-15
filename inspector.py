@@ -101,7 +101,7 @@ def train(trainer, model, data_loader, optimizer, epoch):
         metric_logger.update(loss=loss)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
 
-def save_prediction(ids, prediction_dir, classToRGB, images, labels, predictions):
+def save_prediction(ids, prediction_dir, classToRGB, images, labels, predictions, local_predictions):
     for i in range(len(images)):
         img = np.array(images[i])[:,:,[2,1,0]]
         h = img.shape[0]
@@ -111,11 +111,19 @@ def save_prediction(ids, prediction_dir, classToRGB, images, labels, predictions
         label = np.array(labels[i])[:,:,[2,1,0]]
         img = np.concatenate((img, line), axis=1)
         img = np.concatenate((img, label), axis=1)
+        
+        if local_predictions is not None:
+            pred = transforms.functional.to_pil_image(classToRGB(local_predictions[i]) * 255.)
+            pred = np.array(pred)[:,:,[2,1,0]]
+            img = np.concatenate((img, line), axis=1)
+            img = np.concatenate((img, pred), axis=1)
+            
         if predictions is not None:
             pred = transforms.functional.to_pil_image(classToRGB(predictions[i]) * 255.)
             pred = np.array(pred)[:,:,[2,1,0]]
             img = np.concatenate((img, line), axis=1)
             img = np.concatenate((img, pred), axis=1)
+        
 
         cv2.imwrite(os.path.join(prediction_dir, ids[i] + "_result.png"), img)
 
@@ -136,7 +144,7 @@ def evaluate(evaluator, model, data_loader, generate_image, writer, epoch, num_e
             torch.cuda.synchronize()
             model_time = time.time()
             # Evaluate and get the prediction
-            out = evaluator.eval(sample_batched, model)
+            out_local, out = evaluator.eval(sample_batched, model)
             model_time = time.time() - model_time
             metric_logger.update(model_time=model_time)
             
@@ -146,21 +154,27 @@ def evaluate(evaluator, model, data_loader, generate_image, writer, epoch, num_e
                 os.makedirs(prediction_dir, exist_ok=True)
                 images = sample_batched['image']
                 labels = sample_batched['label']
-                save_prediction(sample_batched['id'], prediction_dir, data_loader.dataset.classToRGB, images, labels, out)
+                save_prediction(sample_batched['id'], prediction_dir, data_loader.dataset.classToRGB, images, labels, out, out_local)
         
-        score_val = evaluator.get_scores()
+        scores = evaluator.get_scores()
+        score_val = scores["aggregate"]
+        score_local = scores["local"]
+        
         evaluator.reset_metrics()
         score = score_val["iou"][1:]
         score = np.mean(np.nan_to_num(score))
         
+        score_lo = np.mean(np.nan_to_num(score_local["iou"][1:]))
+        
         # Log the results
         log = ""
-        log = log + 'epoch [{}/{}] IoU: {:.4f}'.format(epoch+1, num_epochs, score) + "\n"
+        log = log + 'epoch [{}/{}] IoU aggregation: {:.4f} - local: {:.4f}'.format(epoch+1, num_epochs, score, score_lo) + "\n"
         log = log + "val:" + str(score_val["iou"]) + "\n"
+        log = log + "local:" + str(score_local["iou"]) + "\n"
         log += "================================\n"
         print(log)
         if is_main_process():
-            writer.add_scalars('IoU', {'validation iou': score}, epoch)
+            writer.add_scalars('IoU', {'validation iou': score, 'local iou':  score_lo}, epoch)
         torch.set_num_threads(n_threads)
     
     return score
@@ -184,7 +198,7 @@ def main(args):
     device = args.device
     distributed = args.distributed
     
-    model = InspectorNet(args.n_class, args.num_scaling_level, backbone=args.backbone, attention=args.attention)
+    model = InspectorNet(args.n_class, args.num_scaling_level, backbone=args.backbone, refinement=args.refinement)
     model = model.to(device)
     model_without_ddp = model
     gpu = getattr(args, 'gpu', 0)
@@ -231,7 +245,7 @@ def main(args):
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.reduce_step_size, gamma=args.reduce_factor)
     
     # Create trainer
-    trainer = Trainer(device, optimizer, criterion, reg_loss, args.lamb_fmreg, training_level, (args.size, args.size), (args.origin_size, args.origin_size), args.patch_sizes, args.sub_batch_size, dataloader_train.dataset.RGBToClass)
+    trainer = Trainer(device, optimizer, criterion, reg_loss, args.lamb_fmreg, training_level, (args.size, args.size), (args.origin_size, args.origin_size), args.patch_sizes, args.sub_batch_size, dataloader_train.dataset.RGBToClass, args.supervision)
     
     best_score = 0.0
     print("Start training")

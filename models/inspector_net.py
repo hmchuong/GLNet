@@ -131,7 +131,7 @@ class LocalRefinement3(nn.Module):
         # Prediction
         pred = self.last_conv(y)
         
-        return pred
+        return patch_z, pred
     
 class LocalRefinement4(nn.Module):
     def __init__(self, num_classes, BackBoneNet):
@@ -165,7 +165,7 @@ class LocalRefinement4(nn.Module):
         # Prediction
         pred = self.last_conv(g + previous_prediction)
         
-        return pred
+        return patch_z, pred
     
 class LocalRefinement2(nn.Module):
     def __init__(self, num_classes, BackBoneNet):
@@ -199,7 +199,7 @@ class LocalRefinement2(nn.Module):
         # Prediction
         pred = self.backbone(patch_inp)
         
-        return pred
+        return None, pred
 
 class LocalRefinement1(nn.Module):
     """ Network refining the larger prediction with local information
@@ -234,7 +234,7 @@ class LocalRefinement1(nn.Module):
         # Refine prediction
         refinement_prediction = self.refinement(combine_prediction)
         
-        return refinement_prediction
+        return patch_prediction, refinement_prediction
     
 def get_backbone_class(backbone_str):
     if backbone_str == "resnet_fpn":
