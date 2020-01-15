@@ -24,6 +24,7 @@ python -m torch.distributed.launch --nproc_per_node=4 --use_env inspector.py \
 --data_path "/vinai/chuonghm/deep_globe" \
 --n_class 7 \
 --num_scaling_level 3 \
+--refinement 3 \
 --log_path "/vinai/chuonghm/inspector/logs" \
 --task_name "inspector_deepglobe_local0_resnetfpn_refinement3_weight_reg" \
 --restore_path "/vinai/chuonghm/inspector/logs/inspector_deepglobe_global_resnetfpn/inspector_deepglobe_global_resnetfpn.pth" \
