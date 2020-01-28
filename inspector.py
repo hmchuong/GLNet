@@ -28,6 +28,9 @@ from utils.loss import FocalLoss, MSELossWithMargin
 import torch
 torch.manual_seed(2020)
 
+# import multiprocessing
+# multiprocessing.set_start_method('spawn', True)
+
 def prepare_dataset_loaders(dataset_name, data_path, batch_size, distributed, workers, **args):
     """ Prepare dataset loaders
     
@@ -198,7 +201,7 @@ def main(args):
     device = args.device
     distributed = args.distributed
     
-    model = InspectorNet(args.n_class, args.num_scaling_level, backbone=args.backbone, refinement=args.refinement)
+    model = InspectorNet(args.n_class, args.num_scaling_level, backbone=args.backbone, refinement=args.refinement, glob2local=args.glob2local)
     model = model.to(device)
     model_without_ddp = model
     gpu = getattr(args, 'gpu', 0)
@@ -212,7 +215,7 @@ def main(args):
         state = torch.load(args.restore_path, map_location='cpu')
         model_without_ddp.load_state_dict(state, strict=False)
         if not evaluation and args.training_level != -1:
-            model_without_ddp.copy_weight(args.training_level - 1, args.training_level)
+            #model_without_ddp.copy_weight(args.training_level - 1, args.training_level)
             print("Copy weight from previous training branch...")
     
     # Create logger
@@ -224,7 +227,16 @@ def main(args):
     
     # Create evaluator
     training_level = args.training_level
-    evaluator = Evaluator(device, args.sub_batch_size, training_level, args.n_class, args.patch_sizes, (args.size, args.size), (args.origin_size, args.origin_size), dataloader_test.dataset.RGBToClass)
+    evaluator = Evaluator(device, 
+                          args.sub_batch_size, 
+                          training_level, 
+                          args.n_class, 
+                          args.patch_sizes, 
+                          (args.size, args.size), 
+                          (args.origin_size, args.origin_size), 
+                          dataloader_test.dataset.RGBToClass, 
+                          args.warping, 
+                          args.glob2local)
     
     if evaluation:
         evaluate(evaluator, model, dataloader_test, generate_image, writer, 0,0, task_name)
@@ -245,7 +257,20 @@ def main(args):
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.reduce_step_size, gamma=args.reduce_factor)
     
     # Create trainer
-    trainer = Trainer(device, optimizer, criterion, reg_loss, args.lamb_fmreg, training_level, (args.size, args.size), (args.origin_size, args.origin_size), args.patch_sizes, args.sub_batch_size, dataloader_train.dataset.RGBToClass, args.supervision)
+    trainer = Trainer(device, 
+                      optimizer, 
+                      criterion, 
+                      reg_loss, 
+                      args.lamb_fmreg, 
+                      training_level, 
+                      (args.size, args.size), 
+                      (args.origin_size, args.origin_size), 
+                      args.patch_sizes, 
+                      args.sub_batch_size, 
+                      dataloader_train.dataset.RGBToClass, 
+                      args.supervision, 
+                      args.warping, 
+                      args.glob2local)
     
     best_score = 0.0
     print("Start training")

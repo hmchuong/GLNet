@@ -39,6 +39,8 @@ class DeepGlobe(BaseDataset):
             5: [0, 0, 255],
             6: [255, 255, 255]
         }
+        self.color_jitter = transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.04)
+        self.resizer = transforms.Resize((2448, 2448))
     
     @staticmethod
     def prepare_subset_ids(data_path):
@@ -70,7 +72,7 @@ class DeepGlobe(BaseDataset):
         return sample
 
     def _transform(self, image, label):
-
+            
         if np.random.random() > 0.5:
             image = transforms.functional.hflip(image)
             label = transforms.functional.hflip(label)

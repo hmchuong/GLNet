@@ -1,4 +1,4 @@
-export CUDA_VISIBLE_DEVICES=1
+export CUDA_VISIBLE_DEVICES=4
 python inspector.py \
 --evaluation \
 --generate_image \
@@ -11,7 +11,7 @@ python inspector.py \
 --supervision \
 --log_path "/vinai/chuonghm/inspector/logs" \
 --task_name "eval_inspector_deepglobe_local0_resnetfpn_refinement4_weight_reg_supervision" \
---restore_path "/vinai/chuonghm/inspector/logs/inspector_deepglobe_local0_resnetfpn_refinement4_weight_reg_1/inspector_deepglobe_local0_resnetfpn_refinement4_weight_reg_1.pth" \
+--restore_path "/vinai/chuonghm/inspector/logs/inspector_deepglobe_local0_resnetfpn_refinement4_weight_reg_supervision/inspector_deepglobe_local0_resnetfpn_refinement4_weight_reg_supervision.pth" \
 --batch_size 6 \
 --sub_batch_size 6 \
 --patch_sizes 1224 996 640 \

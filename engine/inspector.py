@@ -13,6 +13,7 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 from torchvision import transforms
 import torchvision.transforms.functional as TF
+from skimage import transform as sk_transform
 
 from utils.metrics import ConfusionMatrix
 
@@ -99,7 +100,52 @@ def get_patch_info(shape, p_size):
         m += 1
     return n, m, (x - p_size) * 1.0 / (n - 1), (y - p_size) * 1.0 / (m - 1)
 
-def slice(images,  p_size):
+def tanh_warping(image, top, left, width, height):
+    tanh_one = 0.76159415595
+    image_np = None
+    if isinstance(image, torch.Tensor):
+        image_np = image.permute(1,2,0).to("cpu").numpy()
+    else:
+        image_np = np.array(image)
+    src = np.array([[left, top], [left, top + height], [left + width, top], [left + width, top + height]])
+    dst = np.array([[-1,-1], [-1, 1], [1, -1], [1, 1]])
+    tform = sk_transform.estimate_transform('similarity', src, dst)
+    
+    def map_func(coords):
+        tform2 = sk_transform.SimilarityTransform(scale=1./257., rotation=0, translation=(-0.99, -0.99))
+        return tform.inverse(np.arctanh(tform2(coords)))
+
+    warped = sk_transform.warp(image_np, inverse_map=map_func, output_shape=[height, width] )
+    
+    if isinstance(image, torch.Tensor):
+        return torch.Tensor(warped).permute(2,0,1)
+    else:
+        return Image.fromarray(warped)
+
+def extract_patch_from_warps(image):
+    tanh_one = 0.76159415595
+    _, _, h, w = image.shape
+    
+    top = int(h * (1- tanh_one))
+    bottom = h - top
+    left = int(w * (1- tanh_one))
+    right = w - left
+    
+    patch = F.interpolate(image[:, :, top: bottom, left: right], size=(w, h), mode='bilinear')
+    return patch
+
+def cropping(image, top, left, width, height):
+    if isinstance(image, torch.Tensor):
+        return image[:, top: top + height, left: left + width]
+    else:
+        return transforms.functional.crop(image, top, left, width, height)
+
+def patching(image, top, left, width, height, warping=False):
+    if warping:
+        return tanh_warping(image, top, left, width, height)
+    return cropping(image, top, left, width, height)
+
+def slice(images,  p_size, tanh_warping=False):
     """ Slice images, labels and previous output to small patches
     
     Parameters
@@ -136,10 +182,11 @@ def slice(images,  p_size):
                 else: left = size[1] - p_size[1]
                 template[top:top+p_size[0], left:left+p_size[1]] += patch_ones
                 coordinates[i][x * n_y + y] = (1.0 * top / size[0], 1.0 * left / size[1])
-                if isinstance(images, torch.Tensor):
-                    patches[i][x * n_y + y] = images[i][:, top: top + p_size[0], left: left + p_size[1]]
-                else:
-                    patches[i][x * n_y + y] = transforms.functional.crop(images[i], top, left, p_size[0], p_size[1])
+                patches[i][x * n_y + y] = patching(images[i], top, left, p_size[0], p_size[1])
+                # if isinstance(images, torch.Tensor):
+                #     patches[i][x * n_y + y] = images[i][:, top: top + p_size[0], left: left + p_size[1]]
+                # else:
+                #     patches[i][x * n_y + y] = transforms.functional.crop(images[i], top, left, p_size[0], p_size[1])
         templates.append(Variable(torch.Tensor(template).expand(1, 1, -1, -1)))
     return patches, coordinates, templates, sizes, ratios
 
@@ -155,9 +202,42 @@ def patches2global(patches, out_size, patch_size, coordinates, templates):
     temp_out /= templates.squeeze(0)
     return temp_out
 
+def crop_global_features(out_features, coordinates, ratios):
+    """
+    Parameters
+    ----------
+    out_features: ((C x H x W) x 7)
+    coordinates: [(top, left) x N]
+    ratios: [(width, height) x N]
+    
+    Returns
+    -------
+    patch_features: [(N x C x H x W) x 7]
+    """
+    patch_features = []
+    for feat in out_features:
+        if not isinstance(feat, list):
+            feats = [feat]
+        else:
+            feats = feat
+        temp_feats = []
+        for feat in feats:
+            cropped_feats = []
+            for coord in coordinates:
+                _, H, W = feat.shape
+                top = int(coord[0] * H)
+                bottom = top + int(ratios[0] * H)
+                left = int(coord[1] * W)
+                right = left + int(ratios[1] * W)
+                cropped_feats.append(feat[:, top: bottom, left: right])
+            cropped_feats = torch.stack(cropped_feats)
+            temp_feats.append(cropped_feats)
+        patch_features.append(temp_feats[0] if len(temp_feats) == 1 else temp_feats)
+    return patch_features
+
 class Trainer(object):
     
-    def __init__(self, device, optimizer, criterion, reg_loss_fn, lamb_reg, training_level, rescale_size, origin_size, patch_sizes, sub_batch_size, rgb2class, supervision=False):
+    def __init__(self, device, optimizer, criterion, reg_loss_fn, lamb_reg, training_level, rescale_size, origin_size, patch_sizes, sub_batch_size, rgb2class, supervision, warping, glob2local):
         super(Trainer, self).__init__()
         
         self.device = device
@@ -173,8 +253,10 @@ class Trainer(object):
         self.patch_sizes = patch_sizes
         self.sub_batch_size = sub_batch_size
         self.supervision = supervision
+        self.warping = warping
+        self.glob2local = glob2local
     
-    def train_sub_batches(self, model, patches, label_patches, out_patches, weight_patches, sub_backward, retain_graph, level):
+    def train_sub_batches(self, model, patches, label_patches, out_patches, patch_features, weight_patches, sub_backward, retain_graph, level):
         
         loss = None
         
@@ -191,7 +273,7 @@ class Trainer(object):
         
         params = {
             "mode": "local",
-            "patches": patches_var.to(self.device),
+            "patches": tuple([patches_var.to(self.device)] + patch_features) if self.glob2local else patches_var.to(self.device),
             "previous_prediction": out_patches_var.to(self.device),
             "level": level
         }
@@ -210,33 +292,43 @@ class Trainer(object):
         # Update back to output_patches
         aggre_predictions.require_grad = False
         aggre_predictions = aggre_predictions.detach()
+        if self.warping:
+            aggre_predictions = extract_patch_from_warps(aggre_predictions)
         return aggre_predictions, loss
         
-    def train_one_level(self, model, patch_size, images, labels, weights, out, sub_backward, training_level):
+    def train_one_level(self, model, patch_size, images, labels, weights, out, out_features, sub_backward, training_level):
             
         # Create local patches
-        patches, coordinates, templates, _, ratios = slice(images, patch_size)
+        patches, coordinates, templates, _, ratios = slice(images, patch_size, tanh_warping=self.warping)
         patches = [resize(p_list, self.rescale_size) for p_list in patches]
         
         # Create local labels
-        label_patches, _, _, _, _ = slice(labels, patch_size)
+        label_patches, _, _, _, _ = slice(labels, patch_size, tanh_warping=self.warping)
         
         # Create local previous prediction
-        out_patches, _, _, _, _ = slice(out, patch_size)
+        out_patches, _, _, _, _ = slice(out, patch_size, tanh_warping=self.warping)
         out_patches = [F.interpolate(torch.stack(out_list, dim=0), size=self.rescale_size, mode='bilinear') for out_list in out_patches]
         
         # Create local weights
-        weight_patches, _, _, _, _ = slice(weights.unsqueeze(1), patch_size)
+        weight_patches, _, _, _, _ = slice(weights.unsqueeze(1), patch_size, tanh_warping=self.warping)
         weight_patches = [F.interpolate(torch.stack(out_list, dim=0), size=self.rescale_size, mode='bilinear') for out_list in weight_patches]
         
-
         for i in range(len(images)):
             j = 0
             while j < len(coordinates[i]):
+                patch_feat = []
+                for feat in out_features:
+                    if isinstance(feat, list):
+                        patch_feat.append([f[i] for f in feat])
+                        continue
+                    patch_feat.append(feat[i])
+                    
+                patch_features = crop_global_features(patch_feat, coordinates[i][j: j + self.sub_batch_size], ratios[i])
                 patch_predictions, loss = self.train_sub_batches(model, \
                                                                 patches[i][j : j+self.sub_batch_size], \
                                                                 label_patches[i][j : j+self.sub_batch_size], \
                                                                 out_patches[i][j : j+self.sub_batch_size], \
+                                                                patch_features, \
                                                                 weight_patches[i][j : j+self.sub_batch_size], \
                                                                 sub_backward, \
                                                                 not(i == len(images) - 1 and j + self.sub_batch_size >= len(coordinates[i])), \
@@ -267,6 +359,8 @@ class Trainer(object):
             "images": images_glb.to(self.device)
         }
         global_out = model(**params)
+        global_features = global_out[1:]
+        global_out = global_out[0]
         
         # If training global only
         if self.training_level == -1:
@@ -281,14 +375,14 @@ class Trainer(object):
         
         # For each local branch
         for level in range(self.training_level + 1):
-            out, loss = self.train_one_level(model, (self.patch_sizes[level], self.patch_sizes[level]), images, labels, weights, out, (level == self.training_level), level)
+            out, loss = self.train_one_level(model, (self.patch_sizes[level], self.patch_sizes[level]), images, labels, weights, out, global_features, (level == self.training_level), level)
 
         # Return loss of last layer
         return loss         
 
 class Evaluator(object):
     
-    def __init__(self, device, sub_batch_size, eval_level, num_classes, patch_sizes, rescaled_size, origin_size, rgb2class):
+    def __init__(self, device, sub_batch_size, eval_level, num_classes, patch_sizes, rescaled_size, origin_size, rgb2class, warping, glob2local):
         super(Evaluator, self).__init__()
         
         self.device = device
@@ -300,8 +394,10 @@ class Evaluator(object):
         self.patch_sizes = patch_sizes
         self.rgb2class = rgb2class
         self.sub_batch_size = sub_batch_size
+        self.warping = warping
+        self.glob2local = glob2local
     
-    def infer_sub_batches(self, model, patches, out_patches, level):
+    def infer_sub_batches(self, model, patches, out_patches, patch_features, level):
         
         # Refine by the local branch
         patches_var = images_transform(patches).to(self.device)
@@ -311,34 +407,46 @@ class Evaluator(object):
     
         params = {
             "mode": "local",
-            "patches": patches_var.to(self.device),
+            "patches": tuple([patches_var.to(self.device)] + patch_features) if self.glob2local else patches_var.to(self.device),
             "previous_prediction": out_patches_var.to(self.device),
             "level": level
         }
         local_predictions, aggre_predictions = model(**params)
+        
+        if self.warping:
+            local_predictions = extract_patch_from_warps(local_predictions)
+            aggre_predictions = extract_patch_from_warps(aggre_predictions)
 
         return local_predictions, aggre_predictions
         
-    def infer_one_level(self, model, patch_size, images, out, training_level):
+    def infer_one_level(self, model, patch_size, images, out, out_features, training_level):
             
         # Create local patches
-        patches, coordinates, templates, _, ratios = slice(images, patch_size)
+        patches, coordinates, templates, _, ratios = slice(images, patch_size, tanh_warping=self.warping)
         patches = [resize(p_list, self.rescale_size) for p_list in patches]
         
         # Create local previous prediction
-        out_patches, _, _, _, _ = slice(out, patch_size)
+        out_patches, _, _, _, _ = slice(out, patch_size, tanh_warping=self.warping)
         out_patches = [F.interpolate(torch.stack(out_list, dim=0), size=self.rescale_size, mode='bilinear') for out_list in out_patches]
         
         out_local = out.clone()
-        out_local_patches, _, _, _, _ = slice(out, patch_size)
+        out_local_patches, _, _, _, _ = slice(out, patch_size, tanh_warping=self.warping)
         out_local_patches = [F.interpolate(torch.stack(out_list, dim=0), size=self.rescale_size, mode='bilinear') for out_list in out_local_patches]
             
         for i in range(len(images)):
             j = 0
             while j < len(coordinates[i]):
+                patch_feat = []
+                for feat in out_features:
+                    if isinstance(feat, list):
+                        patch_feat.append([f[i] for f in feat])
+                        continue
+                    patch_feat.append(feat[i])
+                patch_features = crop_global_features(patch_feat, coordinates[i][j: j + self.sub_batch_size], ratios[i])
                 local_predictions, patch_predictions = self.infer_sub_batches(model, \
                                                             patches[i][j : j+self.sub_batch_size], \
                                                             out_patches[i][j : j+self.sub_batch_size], \
+                                                            patch_features, \
                                                             training_level)
                 out_patches[i][j : j+self.sub_batch_size] = patch_predictions.to("cpu")
                 out_local_patches[i][j : j+self.sub_batch_size] = local_predictions.to("cpu")
@@ -375,12 +483,14 @@ class Evaluator(object):
                 "images": images_glb.to(self.device)
             }
             global_out = model(**params)
+            global_features = global_out[1:]
+            global_out = global_out[0]
             out = F.interpolate(global_out, size=self.origin_size, mode='bilinear').to("cpu")
             out_local = F.interpolate(global_out, size=self.origin_size, mode='bilinear').to("cpu")
             
             # For each local branch
             for level in range(self.eval_level + 1):
-                out_local, out = self.infer_one_level(model, (self.patch_sizes[level], self.patch_sizes[level]), images, out, level)
+                out_local, out = self.infer_one_level(model, (self.patch_sizes[level], self.patch_sizes[level]), images, out, global_features, level)
             out = torch.softmax(out, dim=1).argmax(1).numpy()
             labels = sample['label'] # PIL images
             labels_npy = masks_transform(labels, self.rgb2class, numpy=True)
