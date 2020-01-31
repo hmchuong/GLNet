@@ -182,6 +182,17 @@ def evaluate(evaluator, model, data_loader, generate_image, writer, epoch, num_e
     
     return score
 
+def filter_state_dict(state_dict, restoring_level):
+    restored_state = {}
+    for k, v in state_dict.items():
+        if "global_branch" in k:
+            restored_state[k] = v
+        for i in range(0, restoring_level + 1):
+            if "local_new_branch_"+str(i) in k or "local_branch_"+str(i) in k:
+                restored_state[k] = v
+    return restored_state
+                
+
 def main(args):
     
     # Create log path
@@ -213,10 +224,11 @@ def main(args):
     if os.path.isfile(args.restore_path):
         print("Restoring...")
         state = torch.load(args.restore_path, map_location='cpu')
+        state = filter_state_dict(state, args.training_level if evaluation else args.training_level - 1)
         model_without_ddp.load_state_dict(state, strict=False)
-        if not evaluation and args.training_level != -1:
+        #if not evaluation and args.training_level != -1:
             #model_without_ddp.copy_weight(args.training_level - 1, args.training_level)
-            print("Copy weight from previous training branch...")
+            #print("Copy weight from previous training branch...")
     
     # Create logger
     writer = None

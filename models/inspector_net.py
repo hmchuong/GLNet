@@ -6,6 +6,93 @@ from torchvision.models.segmentation import fcn_resnet50
 from .unet import Unet
 import numpy as np
 
+def to_global(params):
+    index, feat, coordinates, ratios = params
+    output_size = (1, feat.shape[1], int(feat.shape[2] / ratios[0]), int(feat.shape[3] / ratios[1]))
+    out = torch.zeros(output_size)
+    template = torch.zeros(output_size[2:])
+    patch_ones = torch.ones((feat.shape[2], feat.shape[3]))
+    for coord, patch in zip(coordinates, feat):
+        top = int(coord[0] * output_size[2])
+        left = int(coord[1] * output_size[3])
+        out[:,:, top: top + feat.shape[2], left: left + feat.shape[3]] += patch.detach().to("cpu")
+        template[top: top + feat.shape[2], left: left + feat.shape[3]]  += patch_ones
+    out /= template
+    return index, F.interpolate(out, size=(feat.shape[2], feat.shape[3]), mode='bilinear')
+
+class InterFeatures(object):
+    def __init__(self, c2, c3, c4, c5, ps0, ps1, ps2):
+        self.c2 = c2
+        self.c3 = c3
+        self.c4 = c4
+        self.c5 = c5
+        self.ps0 = ps0
+        self.ps1 = ps1
+        self.ps2 = ps2
+    
+    def __getitem__(self, index):
+        patch_feat = [self.c2[index], self.c3[index], self.c4[index], self.c5[index]]
+        for feat in [self.ps0, self.ps1, self.ps2]:
+            patch_feat.append([f[index] for f in feat])
+        return patch_feat
+    
+    def to(self, device):
+        return InterFeatures(self.c2.to(device), 
+                             self.c3.to(device), 
+                             self.c4.to(device), 
+                             self.c5.to(device), 
+                             [f.to(device) for f in self.ps0], 
+                             [f.to(device) for f in self.ps1], 
+                             [f.to(device) for f in self.ps2])
+    
+    def __add__(self, o): 
+        #import time
+        #start_time = time.time()
+        c2 = torch.cat((self.c2, o.c2), dim=0) 
+        c3 = torch.cat((self.c3, o.c3), dim=0) 
+        c4 = torch.cat((self.c4, o.c4), dim=0) 
+        c5 = torch.cat((self.c5, o.c5), dim=0) 
+        ps0 = [torch.cat((f1, f2), dim=0) for f1, f2 in zip(self.ps0, o.ps0)]
+        ps1 = [torch.cat((f1, f2), dim=0) for f1, f2 in zip(self.ps1, o.ps1)]
+        ps2 = [torch.cat((f1, f2), dim=0) for f1, f2 in zip(self.ps2, o.ps2)]
+        #print("Execution time", time.time() - start_time)
+        return InterFeatures(c2, c3, c4, c5, ps0, ps1, ps2)
+    
+    def patches2global(self, coordinates, ratios):
+        
+        from multiprocessing.dummy import Pool as ThreadPool
+        pool = ThreadPool(16)
+        tasks = [
+            (0, self.c2, coordinates, ratios),
+            (1, self.c3, coordinates, ratios),
+            (2, self.c4, coordinates, ratios),
+            (3, self.c5, coordinates, ratios),
+        ]
+        tasks += [(4+index, f, coordinates, ratios) for index, f in enumerate(self.ps0)]
+        tasks += [(8+index, f, coordinates, ratios) for index, f in enumerate(self.ps1)]
+        tasks += [(12+index, f, coordinates, ratios) for index, f in enumerate(self.ps2)]
+        
+        results = pool.map(to_global, tasks)
+        pool.close()
+        pool.join()
+        results = sorted(results, key=lambda tup: tup[0])
+        out = InterFeatures(results[0][1], 
+                            results[1][1], 
+                            results[2][1], 
+                            results[3][1], 
+                            [f[1] for f in results[4:8]],
+                            [f[1] for f in results[8:12]],
+                            [f[1] for f in results[12:]])
+        # out = InterFeatures(self.to_global(self.c2, coordinates, ratios), 
+        #                      self.to_global(self.c3, coordinates, ratios), 
+        #                      self.to_global(self.c4, coordinates, ratios), 
+        #                      self.to_global(self.c5, coordinates, ratios),
+        #                      [self.to_global(f, coordinates, ratios) for f in self.ps0], 
+        #                      [self.to_global(f, coordinates, ratios) for f in self.ps1], 
+        #                      [self.to_global(f, coordinates, ratios) for f in self.ps2])
+        
+        return out
+
 class ResnetFPN(nn.Module):
     def __init__(self, numClass):
         super(ResnetFPN, self).__init__()
@@ -84,14 +171,14 @@ class ResnetFPN(nn.Module):
         
         output = F.interpolate(output, size=(H, W), **self._up_kwargs)
         
-        return output, c2, c3, c4, c5, ps0, ps1, ps2
+        return output, InterFeatures(c2, c3, c4, c5, ps0, ps1, ps2)
 
 class ResnetFPNLocal(nn.Module):
-    def __init__(self, numClass):
+    def __init__(self, numClass, local_level=0):
         super(ResnetFPNLocal, self).__init__()
         self.resnet_backbone = resnet50(True)
         self._up_kwargs = {'mode': 'bilinear'}
-        fold = 2
+        fold = local_level + 2
         # Top layer
         self.toplayer = nn.Conv2d(2048 * fold, 256, kernel_size=1, stride=1, padding=0) # Reduce channels
         # Lateral layers
@@ -146,18 +233,21 @@ class ResnetFPNLocal(nn.Module):
         p4 = self._upsample_add(p5, self.latlayer1(torch.cat([c4] + [F.interpolate(c4_ext, size=c4.size()[2:], **self._up_kwargs)], dim=1)))
         p3 = self._upsample_add(p4, self.latlayer2(torch.cat([c3] + [F.interpolate(c3_ext, size=c3.size()[2:], **self._up_kwargs)], dim=1)))
         p2 = self._upsample_add(p3, self.latlayer3(torch.cat([c2] + [F.interpolate(c2_ext, size=c2.size()[2:], **self._up_kwargs)], dim=1)))
+        ps0 = [p5, p4, p3, p2]
         
         # Smooth
         p5 = self.smooth1_1(torch.cat([p5] + [F.interpolate(ps0_ext[0], size=p5.size()[2:], **self._up_kwargs)], dim=1))
         p4 = self.smooth2_1(torch.cat([p4] + [F.interpolate(ps0_ext[1], size=p4.size()[2:], **self._up_kwargs)], dim=1))
         p3 = self.smooth3_1(torch.cat([p3] + [F.interpolate(ps0_ext[2], size=p3.size()[2:], **self._up_kwargs)], dim=1))
         p2 = self.smooth4_1(torch.cat([p2] + [F.interpolate(ps0_ext[3], size=p2.size()[2:], **self._up_kwargs)], dim=1))
+        ps1 = [p5, p4, p3, p2]
         
         p5 = self.smooth1_2(torch.cat([p5] + [F.interpolate(ps1_ext[0], size=p5.size()[2:], **self._up_kwargs)], dim=1))
         p4 = self.smooth2_2(torch.cat([p4] + [F.interpolate(ps1_ext[1], size=p4.size()[2:], **self._up_kwargs)], dim=1))
         p3 = self.smooth3_2(torch.cat([p3] + [F.interpolate(ps1_ext[2], size=p3.size()[2:], **self._up_kwargs)], dim=1))
         p2 = self.smooth4_2(torch.cat([p2] + [F.interpolate(ps1_ext[3], size=p2.size()[2:], **self._up_kwargs)], dim=1))
-
+        ps2 = [p5, p4, p3, p2]
+        
         # Classify
         ps3 = self._concatenate(
                 torch.cat([p5] + [F.interpolate(ps2_ext[0], size=p5.size()[2:], **self._up_kwargs)], dim=1), 
@@ -170,7 +260,7 @@ class ResnetFPNLocal(nn.Module):
         
         output = F.interpolate(output, size=(H, W), **self._up_kwargs)
         
-        return output
+        return output, InterFeatures(c2, c3, c4, c5, ps0, ps1, ps2)
     
 class FCNResnet50(nn.Module):
     def __init__(self, num_classes):
@@ -294,9 +384,9 @@ class LocalRefinement1(nn.Module):
     """ Network refining the larger prediction with local information
     """
     
-    def __init__(self, num_classes, BackBoneNet):
+    def __init__(self, num_classes, BackBoneNet, local_level=0):
         super(LocalRefinement1, self).__init__()
-        self.backbone = BackBoneNet(num_classes)
+        self.backbone = BackBoneNet(num_classes, local_level)
         self.refinement = nn.Conv2d(2 * num_classes, num_classes, kernel_size=3, stride=1, padding=1)
     
     def forward(self, images, previous_prediction):
@@ -318,7 +408,7 @@ class LocalRefinement1(nn.Module):
         patch_prediction = self.backbone(images)
         
         # Combine with previous prediction
-        combine_prediction = torch.cat([patch_prediction, previous_prediction], dim=1)
+        combine_prediction = torch.cat([patch_prediction[0], previous_prediction], dim=1)
         
         # Refine prediction
         refinement_prediction = self.refinement(combine_prediction)
@@ -349,7 +439,7 @@ class InspectorNet(nn.Module):
         
         for i in range(num_scaling_level):
             if glob2local:
-                self.add_module("local_new_branch_"+str(i), LocalNet(num_classes, ResnetFPNLocal))
+                self.add_module("local_new_branch_"+str(i), LocalNet(num_classes, ResnetFPNLocal, local_level=0))
             else:
                 self.add_module("local_branch_"+str(i), BackBoneNet)
             
