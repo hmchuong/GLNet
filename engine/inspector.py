@@ -16,6 +16,7 @@ import torchvision.transforms.functional as TF
 from skimage import transform as sk_transform
 
 from utils.metrics import ConfusionMatrix
+from utils.parallel import map_parallel
 
 transformer = transforms.Compose([
     transforms.ToTensor(),
@@ -41,8 +42,7 @@ def resize(images, shape, label=False):
     -------
     list of PIL Images after resizing
     """
-    resize_fn = partial(TF.resize, size=shape, interpolation=Image.NEAREST if label else Image.BILINEAR)
-    return list(map(resize_fn, images))
+    return map_parallel(lambda image: TF.resize(image, size=shape, interpolation=Image.NEAREST if label else Image.BILINEAR), images)
 
 def masks_transform(masks, rgb2class, numpy=False):
     """ Transform masks
@@ -59,7 +59,7 @@ def masks_transform(masks, rgb2class, numpy=False):
     -------
     numpy or tensor
     """
-    targets = np.array(list(map(lambda m: rgb2class(np.array(m)).astype('int32'), masks)), dtype=np.int32)
+    targets = np.array(map_parallel(lambda m: rgb2class(np.array(m)).astype('int32'), masks), dtype=np.int32)
     if numpy:
         return targets
     return torch.from_numpy(targets).long()
@@ -76,7 +76,7 @@ def images_transform(images):
     torch tensor
     """
     
-    inputs = list(map(lambda img: transformer(img), images))
+    inputs = map_parallel(lambda img: transformer(img), images)
     inputs = torch.stack(inputs, dim=0)
     return inputs
 
@@ -145,6 +145,31 @@ def patching(image, top, left, width, height, warping=False):
         return tanh_warping(image, top, left, width, height)
     return cropping(image, top, left, width, height)
 
+def slice_only(images, p_size, n_x, n_y, step_x, step_y):
+    patches = []
+    
+    for i in range(len(images)):
+        if isinstance(images, torch.Tensor):
+            h, w = images.shape[2:]
+        else:
+            w, h = images[i].size
+        size = (h, w)
+        patches.append([images[i]] * (n_x * n_y))
+        tops = []
+        lefts = []
+        
+        for x in range(n_x):
+            if x < n_x - 1: top = int(np.round(x * step_x))
+            else: top = size[0] - p_size[0]
+            for y in range(n_y):
+                if y < n_y - 1: left = int(np.round(y * step_y))
+                else: left = size[1] - p_size[1]
+                tops.append(top)
+                lefts.append(left)
+        patches[i] = list(map(lambda x: patching(images[i], x[0], x[1], p_size[0], p_size[1]), zip(tops, lefts)))
+        #patches[i][x * n_y + y] = patching(images[i], top, left, p_size[0], p_size[1])
+    return patches
+
 def slice(images,  p_size, tanh_warping=False):
     """ Slice images, labels and previous output to small patches
     
@@ -174,6 +199,8 @@ def slice(images,  p_size, tanh_warping=False):
         n_x, n_y, step_x, step_y = get_patch_info(size, p_size[0])
         patches.append([images[i]] * (n_x * n_y))
         coordinates.append([(0, 0)] * (n_x * n_y))
+        tops = []
+        lefts = []
         for x in range(n_x):
             if x < n_x - 1: top = int(np.round(x * step_x))
             else: top = size[0] - p_size[0]
@@ -182,13 +209,12 @@ def slice(images,  p_size, tanh_warping=False):
                 else: left = size[1] - p_size[1]
                 template[top:top+p_size[0], left:left+p_size[1]] += patch_ones
                 coordinates[i][x * n_y + y] = (1.0 * top / size[0], 1.0 * left / size[1])
-                patches[i][x * n_y + y] = patching(images[i], top, left, p_size[0], p_size[1])
-                # if isinstance(images, torch.Tensor):
-                #     patches[i][x * n_y + y] = images[i][:, top: top + p_size[0], left: left + p_size[1]]
-                # else:
-                #     patches[i][x * n_y + y] = transforms.functional.crop(images[i], top, left, p_size[0], p_size[1])
+                #patches[i][x * n_y + y] = patching(images[i], top, left, p_size[0], p_size[1])
+                tops.append(top)
+                lefts.append(left)
+        patches[i] = list(map(lambda x: patching(images[i], x[0], x[1], p_size[0], p_size[1]), zip(tops, lefts)))
         templates.append(Variable(torch.Tensor(template).expand(1, 1, -1, -1)))
-    return patches, coordinates, templates, sizes, ratios
+    return patches, coordinates, templates, sizes, ratios, n_x, n_y, step_x, step_y
 
 def patches2global(patches, out_size, patch_size, coordinates, templates):
     temp_out = torch.zeros(out_size)
@@ -259,7 +285,6 @@ class Trainer(object):
     def train_sub_batches(self, model, patches, label_patches, out_patches, patch_features, weight_patches, sub_backward, retain_graph, level):
         
         loss = None
-        
         # Refine by the local branch
         patches_var = images_transform(patches).to(self.device)
         
@@ -277,7 +302,6 @@ class Trainer(object):
             "previous_prediction": out_patches_var.to(self.device),
             "level": level
         }
-        
         local_predictions, aggre_predictions = model(**params)
         
         # Calculate loss if current training level
@@ -297,24 +321,27 @@ class Trainer(object):
         return local_predictions[1], aggre_predictions, loss
         
     def train_one_level(self, model, patch_size, images, labels, weights, out, out_features, sub_backward, training_level):
-            
+        
         # Create local patches
-        patches, coordinates, templates, _, ratios = slice(images, patch_size, tanh_warping=self.warping)
-        patches = list(map(lambda p_list: resize(p_list, self.rescale_size), patches))
+        patches, coordinates, templates, _, ratios, n_x, n_y, step_x, step_y = slice(images, patch_size, tanh_warping=self.warping)
+        patches = map_parallel(lambda p_list: resize(p_list, self.rescale_size), patches)
         
         # Create local labels
-        label_patches, _, _, _, _ = slice(labels, patch_size, tanh_warping=self.warping)
+        label_patches = slice_only(labels, patch_size,  n_x, n_y, step_x, step_y)
         
         # Create local previous prediction
-        out_patches, _, _, _, _ = slice(out, patch_size, tanh_warping=self.warping)
-        out_patches = list(map(lambda out_list: F.interpolate(torch.stack(out_list, dim=0), size=self.rescale_size, mode='bilinear'), out_patches))
+        out_patches = slice_only(out, patch_size, n_x, n_y, step_x, step_y)
+        #out_patches = list(map(lambda out_list: F.interpolate(torch.stack(out_list, dim=0), size=self.rescale_size, mode='bilinear'), out_patches))
         
         # Create local weights
-        weight_patches, _, _, _, _ = slice(weights.unsqueeze(1), patch_size, tanh_warping=self.warping)
-        
-        weight_patches = list(map(lambda out_list: F.interpolate(torch.stack(out_list, dim=0), size=self.rescale_size, mode='bilinear'), weight_patches))
+        weight_patches = slice_only(weights.unsqueeze(1), patch_size, n_x, n_y, step_x, step_y)
+        n = len(out_patches)
+        temp = map_parallel(lambda out_list: F.interpolate(torch.stack(out_list, dim=0), size=self.rescale_size, mode='bilinear'), weight_patches + out_patches)
+        weight_patches = temp[:n]
+        out_patches = temp[n:]
         
         temp_features = [None] * len(images)
+        
         for i in range(len(images)):
             j = 0
             while j < len(coordinates[i]):
@@ -331,19 +358,19 @@ class Trainer(object):
                                                                 training_level)
                 # Save the patch features to restore
                 if temp_features[i] is None:
-                    temp_features[i] = temp_patch_features
+                    temp_features[i] = temp_patch_features.detach_cpu()
                 else:
-                    temp_features[i] += temp_patch_features
-                
+                    temp_features[i] += temp_patch_features.detach_cpu()
                 # Update the output
-                out_patches[i][j : j+self.sub_batch_size] = patch_predictions.to("cpu")
+                out_patches[i][j : j+self.sub_batch_size] = patch_predictions.detach().to("cpu")
                 j += self.sub_batch_size
                 
             # Update output_patches back to out
-            out[i] = patches2global(out_patches[i], out.shape[1:], patch_size, coordinates[i], templates[i])
-            
-            # Update features back
-            temp_features[i] = temp_features[i].patches2global(coordinates[i], ratios[i])
+        out = torch.stack(map_parallel(lambda i: patches2global(out_patches[i], out.shape[1:], patch_size, coordinates[i], templates[i]), range(len(images))), dim=0)
+        #out = torch.stack(list(map(lambda i: patches2global(out_patches[i], out.shape[1:], patch_size, coordinates[i], templates[i]), range(len(images)))), dim=0)
+        
+        # Update features back
+        temp_features = map_parallel(lambda i: temp_features[i].patches2global(coordinates[i], ratios[i]), range(len(images)))
             
         self.optimizer.step()
         self.optimizer.zero_grad()
@@ -368,6 +395,7 @@ class Trainer(object):
             "mode": "global",
             "images": images_glb.to(self.device)
         }
+        
         global_out, features = model(**params)
         
         # If training global only
@@ -430,16 +458,16 @@ class Evaluator(object):
     def infer_one_level(self, model, patch_size, images, out, out_features, training_level):
             
         # Create local patches
-        patches, coordinates, templates, _, ratios = slice(images, patch_size, tanh_warping=self.warping)
-        patches = list(map(lambda p_list: resize(p_list, self.rescale_size), patches))
+        patches, coordinates, templates, _, ratios, n_x, n_y, step_x, step_y = slice(images, patch_size, tanh_warping=self.warping)
+        patches = map_parallel(lambda p_list: resize(p_list, self.rescale_size), patches)
         
         # Create local previous prediction
-        out_patches, _, _, _, _ = slice(out, patch_size, tanh_warping=self.warping)
-        out_patches = list(map(lambda out_list: F.interpolate(torch.stack(out_list, dim=0), size=self.rescale_size, mode='bilinear'), out_patches))
+        out_patches = slice_only(out, patch_size,  n_x, n_y, step_x, step_y)
+        out_patches = map_parallel(lambda out_list: F.interpolate(torch.stack(out_list, dim=0), size=self.rescale_size, mode='bilinear'), out_patches)
         
         out_local = out.clone()
-        out_local_patches, _, _, _, _ = slice(out, patch_size, tanh_warping=self.warping)
-        out_local_patches = list(map(lambda out_list: F.interpolate(torch.stack(out_list, dim=0), size=self.rescale_size, mode='bilinear'), out_local_patches))
+        out_local_patches= slice_only(out_local, patch_size,  n_x, n_y, step_x, step_y)
+        out_local_patches = map_parallel(lambda out_list: F.interpolate(torch.stack(out_list, dim=0), size=self.rescale_size, mode='bilinear'), out_local_patches)
         
         temp_features = [None] * len(images)
         for i in range(len(images)):
@@ -457,9 +485,9 @@ class Evaluator(object):
                 
                 # Save the patch features to restore
                 if temp_features[i] is None:
-                    temp_features[i] = temp_patch_features
+                    temp_features[i] = temp_patch_features.detach_cpu()
                 else:
-                    temp_features[i] += temp_patch_features
+                    temp_features[i] += temp_patch_features.detach_cpu()
                 
             # Update output_patches back to out
             out[i] = patches2global(out_patches[i], out.shape[1:], patch_size, coordinates[i], templates[i])

@@ -57,8 +57,8 @@
 # --dist-url "tcp://127.0.0.1:1234" \
 # --workers 10 --world-size 5
 
-export CUDA_VISIBLE_DEVICES=5,6,7
-python -m torch.distributed.launch --nproc_per_node=3 --use_env inspector.py \
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,7
+python -m torch.distributed.launch --nproc_per_node=6 --use_env inspector.py \
 --dataset_name "DeepGlobe" \
 --data_path "/vinai/chuonghm/deep_globe" \
 --n_class 7 \
@@ -67,14 +67,14 @@ python -m torch.distributed.launch --nproc_per_node=3 --use_env inspector.py \
 --glob2local \
 --supervision \
 --log_path "/vinai/chuonghm/inspector/logs" \
---task_name "inspector_deepglobe_global_resnetfpn_508_local1" \
---restore_path "/vinai/chuonghm/inspector/logs/inspector_deepglobe_global_resnetfpn_508_local0_3/inspector_deepglobe_global_resnetfpn_508_local0_3.pth" \
---batch_size 10 \
---sub_batch_size 10 \
+--task_name "inspector_deepglobe_global_resnetfpn_508_local2" \
+--restore_path "/vinai/chuonghm/inspector/logs/inspector_deepglobe_global_resnetfpn_508_local1/inspector_deepglobe_global_resnetfpn_508_local1.pth" \
+--batch_size 6 \
+--sub_batch_size 6 \
 --patch_sizes 1350 702 508 \
 --size 508 \
 --origin_size 2448 \
---training_level 1 \
+--training_level 2 \
 --lr 5e-5 \
 --reduce_step_size 50 \
 --early_stopping 120 \
@@ -83,5 +83,5 @@ python -m torch.distributed.launch --nproc_per_node=3 --use_env inspector.py \
 --level_decay 0 \
 --lamb_fmreg 0.15 \
 --add_weight \
---dist-url "tcp://127.0.0.1:1234" \
---workers 10 --world-size 3
+--dist-url "tcp://127.0.0.1:1235" \
+--workers 10 --world-size 6

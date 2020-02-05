@@ -5,9 +5,10 @@ import torch
 from torchvision.models.segmentation import fcn_resnet50
 from .unet import Unet
 import numpy as np
+from utils.parallel import map_parallel
 
 def to_global(params):
-    index, feat, coordinates, ratios = params
+    feat, coordinates, ratios = params
     output_size = (1, feat.shape[1], int(feat.shape[2] / ratios[0]), int(feat.shape[3] / ratios[1]))
     out = torch.zeros(output_size)
     template = torch.zeros(output_size[2:])
@@ -18,7 +19,7 @@ def to_global(params):
         out[:,:, top: top + feat.shape[2], left: left + feat.shape[3]] += patch.detach().to("cpu")
         template[top: top + feat.shape[2], left: left + feat.shape[3]]  += patch_ones
     out /= template
-    return index, F.interpolate(out, size=(feat.shape[2], feat.shape[3]), mode='bilinear')
+    return F.interpolate(out, size=(feat.shape[2], feat.shape[3]), mode='bilinear')
 
 class InterFeatures(object):
     def __init__(self, c2, c3, c4, c5, ps0, ps1, ps2):
@@ -36,14 +37,28 @@ class InterFeatures(object):
             patch_feat.append([f[index] for f in feat])
         return patch_feat
     
+    def detach_cpu(self):
+        arr = [self.c2, self.c3, self.c4, self.c5] + self.ps0 + self.ps1 + self.ps2
+        arr = map_parallel(lambda x: x.detach().cpu(), arr)
+        self.c2 = arr[0]
+        self.c3 = arr[1]
+        self.c4 = arr[2]
+        self.c5 = arr[3]
+        self.ps0 = arr[4:8]
+        self.ps1 = arr[8:12]
+        self.ps2 = arr[12:]
+        return self
+    
     def to(self, device):
-        return InterFeatures(self.c2.to(device), 
-                             self.c3.to(device), 
-                             self.c4.to(device), 
-                             self.c5.to(device), 
-                             [f.to(device) for f in self.ps0], 
-                             [f.to(device) for f in self.ps1], 
-                             [f.to(device) for f in self.ps2])
+        arr = [self.c2, self.c3, self.c4, self.c5] + self.ps0 + self.ps1 + self.ps2
+        arr = map_parallel(lambda x: x.to(device), arr)
+        return InterFeatures(arr[0], 
+                             arr[1], 
+                             arr[2], 
+                             arr[3], 
+                             arr[4:8], 
+                             arr[8:12], 
+                             arr[12:])
     
     def __add__(self, o): 
         #import time
@@ -60,29 +75,24 @@ class InterFeatures(object):
     
     def patches2global(self, coordinates, ratios):
         
-        from multiprocessing.dummy import Pool as ThreadPool
-        pool = ThreadPool(16)
         tasks = [
-            (0, self.c2, coordinates, ratios),
-            (1, self.c3, coordinates, ratios),
-            (2, self.c4, coordinates, ratios),
-            (3, self.c5, coordinates, ratios),
+            (self.c2, coordinates, ratios),
+            (self.c3, coordinates, ratios),
+            (self.c4, coordinates, ratios),
+            (self.c5, coordinates, ratios),
         ]
-        tasks += [(4+index, f, coordinates, ratios) for index, f in enumerate(self.ps0)]
-        tasks += [(8+index, f, coordinates, ratios) for index, f in enumerate(self.ps1)]
-        tasks += [(12+index, f, coordinates, ratios) for index, f in enumerate(self.ps2)]
+        tasks += [(f, coordinates, ratios) for f in self.ps0]
+        tasks += [(f, coordinates, ratios) for f in self.ps1]
+        tasks += [(f, coordinates, ratios) for f in self.ps2]
         
-        results = pool.map(to_global, tasks)
-        pool.close()
-        pool.join()
-        results = sorted(results, key=lambda tup: tup[0])
-        out = InterFeatures(results[0][1], 
-                            results[1][1], 
-                            results[2][1], 
-                            results[3][1], 
-                            [f[1] for f in results[4:8]],
-                            [f[1] for f in results[8:12]],
-                            [f[1] for f in results[12:]])
+        results = map_parallel(lambda x: to_global(x), tasks)
+        out = InterFeatures(results[0], 
+                            results[1], 
+                            results[2], 
+                            results[3], 
+                            [f for f in results[4:8]],
+                            [f for f in results[8:12]],
+                            [f for f in results[12:]])
         # out = InterFeatures(self.to_global(self.c2, coordinates, ratios), 
         #                      self.to_global(self.c3, coordinates, ratios), 
         #                      self.to_global(self.c4, coordinates, ratios), 
