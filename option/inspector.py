@@ -24,6 +24,9 @@ class Options():
         
         # For training
         parser.add_argument('--evaluation', action='store_true', default=False, help='evaluation only')
+        parser.add_argument('--generate_feature', action='store_true', default=False, help='generate features for training next stage')
+        parser.add_argument('--feature_out', type=str, default='features', help='feature output directory')
+        parser.add_argument('--restore_features', type=str, default='None', help='feature output directory')
         parser.add_argument('--generate_image', action='store_true', default=False, help='Generate images during evaluation')
         parser.add_argument('--batch_size', type=int, default=6, help='batch size for origin global image (without downsampling)')
         parser.add_argument('--sub_batch_size', type=int, default=6, help='batch size for using local image patches')

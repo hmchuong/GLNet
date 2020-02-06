@@ -31,7 +31,7 @@ torch.manual_seed(2020)
 # import multiprocessing
 # multiprocessing.set_start_method('spawn', True)
 
-def prepare_dataset_loaders(dataset_name, data_path, batch_size, distributed, workers, **args):
+def prepare_dataset_loaders(dataset_name, data_path, batch_size, distributed, workers, restore_features, **args):
     """ Prepare dataset loaders
     
     Parameters
@@ -64,7 +64,7 @@ def prepare_dataset_loaders(dataset_name, data_path, batch_size, distributed, wo
     (train_ids, train_data_path), (val_ids, val_data_path), (test_ids, test_data_path) = Dataset.prepare_subset_ids(data_path)
 
     # Create datasets
-    dataset_train = Dataset(train_data_path, train_ids, label=True, transform=True)
+    dataset_train = Dataset(train_data_path, train_ids, label=True, transform=True, restore_features=None if restore_features == 'None' else restore_features)
     dataset_val = Dataset(val_data_path, val_ids, label=True)
     dataset_test = Dataset(test_data_path, test_ids, label=True)
 
@@ -80,7 +80,7 @@ def prepare_dataset_loaders(dataset_name, data_path, batch_size, distributed, wo
 
     # Create batch sampler for training
     train_batch_sampler = BatchSampler(
-                train_sampler, batch_size, drop_last=True)
+                train_sampler, batch_size, drop_last=False)
     
     # Create data loaders
     dataloader_train = DataLoader(dataset=dataset_train, batch_sampler=train_batch_sampler, num_workers=workers, collate_fn=collate)
@@ -103,6 +103,19 @@ def train(trainer, model, data_loader, optimizer, epoch):
         loss = trainer.train(model, sample_batched)
         metric_logger.update(loss=loss)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+        
+def save_features(trainer, model, data_loader, epoch, out_dir):
+    """ Train the model
+    """
+    # model.eval()
+
+    metric_logger = MetricLogger(delimiter="  ")
+    header = 'Epoch: [{}]'.format(epoch)
+    
+    for i_batch, sample_batched in enumerate(metric_logger.log_every(data_loader, 1, header)):
+        # Train
+        with torch.no_grad():
+            trainer.save_features(model, sample_batched, out_dir)
 
 def save_prediction(ids, prediction_dir, classToRGB, images, labels, predictions, local_predictions):
     for i in range(len(images)):
@@ -283,6 +296,12 @@ def main(args):
                       args.supervision, 
                       args.warping, 
                       args.glob2local)
+    
+    # Generate features only
+    if args.generate_feature:
+        
+        save_features(trainer, model, dataloader_train, 1, args.feature_out)
+        return
     
     best_score = 0.0
     print("Start training")

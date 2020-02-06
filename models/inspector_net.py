@@ -59,7 +59,16 @@ class InterFeatures(object):
                              arr[4:8], 
                              arr[8:12], 
                              arr[12:])
-    
+    def unsqueeze(self):
+        self.c2 = self.c2.unsqueeze(0)
+        self.c3 = self.c3.unsqueeze(0)
+        self.c4 = self.c4.unsqueeze(0)
+        self.c5 = self.c5.unsqueeze(0)
+        self.ps0 = [f.unsqueeze(0) for f in self.ps0]
+        self.ps1 = [f.unsqueeze(0) for f in self.ps1]
+        self.ps2 = [f.unsqueeze(0) for f in self.ps2]
+        return self
+        
     def __add__(self, o): 
         #import time
         #start_time = time.time()

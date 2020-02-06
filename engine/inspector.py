@@ -7,6 +7,8 @@ from functools import partial, reduce
 
 import numpy as np
 from PIL import Image
+import pickle
+import os
 
 import torch
 from torch.autograd import Variable
@@ -17,6 +19,7 @@ from skimage import transform as sk_transform
 
 from utils.metrics import ConfusionMatrix
 from utils.parallel import map_parallel
+from models.inspector_net import InterFeatures
 
 transformer = transforms.Compose([
     transforms.ToTensor(),
@@ -27,8 +30,16 @@ def collate(batch):
     label = [ b['label'] for b in batch ]
     id = [ b['id'] for b in batch ]
     weight = torch.stack([ b['weight'] for b in batch], dim=0)
+    res = {'image': image, 'label': label, 'id': id, 'weight': weight}
     
-    return {'image': image, 'label': label, 'id': id, 'weight': weight}
+    if 'features' in batch[0]:
+        #feat = reduce((lambda x, y: x + y), [ b['features'] for b in batch])
+        #out = torch.stack([ b['out'] for b in batch], dim=0)
+        res['features'] = [ b['features'] for b in batch ]
+        #res['out'] = out
+        
+    return res
+    
 
 def resize(images, shape, label=False):
     """ Resize PIL images
@@ -371,18 +382,61 @@ class Trainer(object):
         
         # Update features back
         temp_features = map_parallel(lambda i: temp_features[i].patches2global(coordinates[i], ratios[i]), range(len(images)))
-            
-        self.optimizer.step()
-        self.optimizer.zero_grad()
+        if sub_backward:
+            self.optimizer.step()
+            self.optimizer.zero_grad()
         
         out_feat = reduce((lambda x, y: x + y), temp_features)
                 
         return out_feat.to(self.device), out, loss
-            
+    
+    def save_features(self, model, sample, out_dir):
+        images, labels, weights = sample['image'], sample['label'], sample['weight']
+        ids = sample['id']
+        
+        # FF global images
+        images_glb = resize(images, self.rescale_size)
+        images_glb = images_transform(images_glb)
+        
+        params = {
+            "mode": "global",
+            "images": images_glb.to(self.device)
+        }
+        
+        global_out, features = model(**params)
+        
+        # Refine result with local branches
+        out = F.interpolate(global_out, size=self.origin_size, mode='bilinear').to("cpu")
+        
+        # For each local branch
+        for level in range(self.training_level + 1):
+            features, out, _ = self.train_one_level(model, (self.patch_sizes[level], self.patch_sizes[level]), images, labels, weights, out, features, False, level)
+        for index, id in enumerate(ids):
+            pickle.dump((features.detach_cpu()[index], out[index]), open(os.path.join(out_dir, id+".pkl"), "wb"))
     
     def train(self, model, sample):
         
         images, labels, weights = sample['image'], sample['label'], sample['weight']
+        
+        if 'features' in sample:
+            filenames = sample['features']
+            features = []
+            outs = []
+            import time
+            start_time = time.time()
+            def convert(filename):
+                feature, out = pickle.load(open(filename, "rb"))
+                feature = InterFeatures(feature[0], feature[1], feature[2], feature[3], feature[4], feature[5], feature[6]).unsqueeze()
+                return (feature, out)
+            temp = map_parallel(convert, filenames)
+            features = [f[0] for f in temp]
+            outs = [f[1] for f in temp]
+                
+            features = reduce((lambda x, y: x + y), features)
+            out = torch.stack(outs, dim=0)
+            print("Loading time", time.time() - start_time)
+            features, out, loss = self.train_one_level(model, (self.patch_sizes[self.training_level], self.patch_sizes[self.training_level]), images, labels, weights, out, features, True, self.training_level)
+            return loss
         
         # FF global images
         images_glb = resize(images, self.rescale_size)
@@ -507,6 +561,8 @@ class Evaluator(object):
     def reset_metrics(self):
         self.metric.reset()
         self.local_metric.reset()
+        
+    
     
     def eval(self, sample, model):
         model_no_ddp = model
