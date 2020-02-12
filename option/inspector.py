@@ -17,6 +17,7 @@ class Options():
         parser.add_argument('--warping', action='store_true', default=False, help='Using tanh warping for local branch')
         parser.add_argument('--num_scaling_level', type=int, default=3, help='number of scaling level')
         parser.add_argument('--restore_path', type=str, default="", help='name for global model path')
+        parser.add_argument('--continue_train', action='store_true', default=False, help='Continue training the model')
         
         # For logging
         parser.add_argument('--log_path', type=str, help='path to store tensorboard log files and model file, no need to include task specific name')
@@ -39,6 +40,7 @@ class Options():
         parser.add_argument('--lr', type=float, default=1e-3, help='learning rate')
         parser.add_argument('--reduce_factor', type=float, default=0.2, help='learning rate decay factor')
         parser.add_argument('--reduce_step_size', type=int, default=50, help=' rate decay factor')
+        parser.add_argument('--use_origin_reg', action='store_true', default=False, help='evaluation only')
         parser.add_argument('--lamb_fmreg', type=float, default=0.15, help='loss weight feature map regularization')
         parser.add_argument('--add_weight',action='store_true', default=False, help='evaluation only')
         parser.add_argument('--supervision',action='store_true', default=False, help='supervision on local branch')

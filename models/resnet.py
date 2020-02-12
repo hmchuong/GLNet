@@ -95,8 +95,9 @@ class ResNet(nn.Module):
     def forward(self, x):
         x = self.conv1(x)
         x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
+        c1 = self.relu(x)
+        
+        x = self.maxpool(c1)
 
         c2 = self.layer1(x)
         c3 = self.layer2(c2)

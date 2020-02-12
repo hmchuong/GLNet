@@ -1,5 +1,6 @@
 import threading
 import logging
+import sys
 
 def map_parallel(f, iter, max_parallel = 4):
     """Just like map(f, iter) but each is done in a separate thread."""

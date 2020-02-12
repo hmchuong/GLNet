@@ -1,4 +1,4 @@
-export CUDA_VISIBLE_DEVICES=7
+export CUDA_VISIBLE_DEVICES=2
 python inspector.py \
 --evaluation \
 --generate_image \
@@ -10,17 +10,19 @@ python inspector.py \
 --glob2local \
 --supervision \
 --log_path "/vinai/chuonghm/inspector/logs" \
---task_name "eval_global_transpose" \
---restore_path "/vinai/chuonghm/inspector/logs/inspector_global_508_transpose/inspector_global_508_transpose.pth" \
---patch_sizes 1350 702 508 \
+--task_name "eval_tuning_patchsize_local0_1439" \
+--restore_path "/vinai/chuonghm/inspector/logs/tuning_patchsize_1439_4/tuning_patchsize_1439_4.pth" \
+--batch_size 6 \
+--sub_batch_size 6 \
+--patch_sizes 1439 721 508 \
 --size 508 \
 --origin_size 2448 \
---training_level -1 \
+--training_level 0 \
 --lr 5e-5 \
 --reduce_step_size 50 \
 --early_stopping 120 \
 --num_epochs 120 \
---reduce_factor 0.4 \
+--reduce_factor 0.5 \
 --level_decay 0 \
 --lamb_fmreg 0.15 \
 --add_weight \

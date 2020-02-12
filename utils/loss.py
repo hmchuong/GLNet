@@ -89,11 +89,16 @@ class SoftCrossEntropyLoss2d(nn.Module):
         return loss
 
 class MSELossWithMargin(nn.Module):
-    def __init__(self, margin):
+    def __init__(self, margin, use_origin=False):
         super(MSELossWithMargin, self).__init__()
         self.margin = margin
+        self.loss = nn.MSELoss(reduction='mean')
+        self.use_origin = use_origin
         
     def forward(self, inputs, targets):
+        if self.use_origin:
+            loss = self.loss(inputs, targets)
+            return loss
         b, d, _, _ = inputs.shape
         inputs = inputs.permute(0,2,3,1).contiguous().view(-1, d)
         targets = targets.permute(0,2,3,1).contiguous().view(-1, d)

@@ -237,7 +237,7 @@ def main(args):
     if os.path.isfile(args.restore_path):
         print("Restoring...")
         state = torch.load(args.restore_path, map_location='cpu')
-        state = filter_state_dict(state, args.training_level if evaluation else args.training_level - 1)
+        state = filter_state_dict(state, args.training_level if evaluation or args.continue_train else args.training_level - 1)
         model_without_ddp.load_state_dict(state, strict=False)
         #if not evaluation and args.training_level != -1:
             #model_without_ddp.copy_weight(args.training_level - 1, args.training_level)
@@ -261,7 +261,7 @@ def main(args):
                           (args.origin_size, args.origin_size), 
                           dataloader_test.dataset.RGBToClass, 
                           args.warping, 
-                          args.glob2local)
+                          args.glob2local, testing=evaluation)
     
     if evaluation:
         evaluate(evaluator, model, dataloader_test, generate_image, writer, 0,0, task_name)
@@ -278,7 +278,7 @@ def main(args):
     print("Number of training parameters:", sum(p.numel() for p in model_without_ddp.parameters() if p.requires_grad))
     
     criterion = FocalLoss(gamma=3, add_weight=args.add_weight)
-    reg_loss = MSELossWithMargin(margin=args.reg_margin)
+    reg_loss = MSELossWithMargin(margin=args.reg_margin, use_origin=args.use_origin_reg)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.reduce_step_size, gamma=args.reduce_factor)
     
     # Create trainer

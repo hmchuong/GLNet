@@ -87,23 +87,57 @@
 # --add_weight \
 # --workers 10
 
-export CUDA_VISIBLE_DEVICES=1,3,6,7
-python -m torch.distributed.launch --nproc_per_node=4 --use_env inspector.py \
+# export CUDA_VISIBLE_DEVICES=3,6
+# python -m torch.distributed.launch --nproc_per_node=2 --use_env inspector.py \
+# --dataset_name "DeepGlobe" \
+# --data_path "/vinai/chuonghm/deep_globe" \
+# --n_class 7 \
+# --use_origin_reg \
+# --num_scaling_level 3 \
+# --refinement 1 \
+# --glob2local \
+# --supervision \
+# --log_path "/vinai/chuonghm/inspector/logs" \
+# --task_name "inspector_deepglobe_global_resnetfpn_508_local0_ori_reg" \
+# --restore_path "/vinai/chuonghm/inspector/logs/inspector_deepglobe_global_resnetfpn_508/inspector_deepglobe_global_resnetfpn_508.pth" \
+# --batch_size 3 \
+# --sub_batch_size 3 \
+# --patch_sizes 1350 702 508 \
+# --size 508 \
+# --origin_size 2448 \
+# --training_level 0 \
+# --lr 5e-5 \
+# --reduce_step_size 50 \
+# --early_stopping 120 \
+# --num_epochs 120 \
+# --reduce_factor 0.5 \
+# --level_decay 0 \
+# --lamb_fmreg 0.15 \
+# --add_weight \
+# --dist-url "tcp://127.0.0.1:1240" \
+# --workers 10 --world-size 2
+
+export CUDA_VISIBLE_DEVICES=0
+python inspector.py \
+--evaluation \
+--generate_image \
 --dataset_name "DeepGlobe" \
 --data_path "/vinai/chuonghm/deep_globe" \
 --n_class 7 \
+--use_origin_reg \
 --num_scaling_level 3 \
 --refinement 1 \
 --glob2local \
 --supervision \
 --log_path "/vinai/chuonghm/inspector/logs" \
---task_name "inspector_global_508_transpose" \
---batch_size 6 \
---sub_batch_size 6 \
+--task_name "eval_inspector_deepglobe_global_resnetfpn_508_local0_ori_reg" \
+--restore_path "/vinai/chuonghm/inspector/logs/inspector_deepglobe_global_resnetfpn_508_local0_ori_reg/inspector_deepglobe_global_resnetfpn_508_local0_ori_reg.pth" \
+--batch_size 3 \
+--sub_batch_size 3 \
 --patch_sizes 1350 702 508 \
 --size 508 \
 --origin_size 2448 \
---training_level -1 \
+--training_level 0 \
 --lr 5e-5 \
 --reduce_step_size 50 \
 --early_stopping 120 \
@@ -112,5 +146,5 @@ python -m torch.distributed.launch --nproc_per_node=4 --use_env inspector.py \
 --level_decay 0 \
 --lamb_fmreg 0.15 \
 --add_weight \
---dist-url "tcp://127.0.0.1:1235" \
---workers 10 --world-size 4
+--dist-url "tcp://127.0.0.1:1240" \
+--workers 10 --world-size 2
