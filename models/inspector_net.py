@@ -193,44 +193,62 @@ class ResnetFPN(nn.Module):
         
         return output, InterFeatures(c2, c3, c4, c5, ps0, ps1, ps2)
 
+class Normalize2D(nn.Module):
+    def __init__(self, channels):
+        super(Normalize2D, self).__init__()
+        self.register_parameter('alpha',nn.Parameter(torch.ones(1,channels,1,1)))
+        self.register_parameter('beta',nn.Parameter(torch.ones(1,channels,1,1)))
+        
+    def forward(self, x):
+        return x * self.alpha + self.beta
+    
+class NormalizeConv2D(nn.Module):
+    def __init__(self, channels):
+        super(NormalizeConv2D, self).__init__()
+        self.conv = nn.Conv2d(channels, channels, 1)
+    
+    def forward(self, x):
+        return self.conv(x)
+
 class ResnetFPNLocal(nn.Module):
     def __init__(self, numClass, local_level=0):
         super(ResnetFPNLocal, self).__init__()
         self.resnet_backbone = resnet50(True)
         self._up_kwargs = {'mode': 'bilinear'}
         fold = local_level + 2
+        normalize_layer = NormalizeConv2D
         # Top layer
         self.toplayer = nn.Conv2d(2048 * fold, 256, kernel_size=1, stride=1, padding=0) # Reduce channels
-        self.bn_top = nn.BatchNorm2d(2048)
+        self.bn_top = normalize_layer(2048)
         # Lateral layers
         self.latlayer1 = nn.Conv2d(1024 * fold, 256, kernel_size=1, stride=1, padding=0)
-        self.bn_latlayer1 = nn.BatchNorm2d(1024)
+        self.bn_latlayer1 = normalize_layer(1024)
         self.latlayer2 = nn.Conv2d(512 * fold, 256, kernel_size=1, stride=1, padding=0)
-        self.bn_latlayer2 = nn.BatchNorm2d(512)
+        self.bn_latlayer2 = normalize_layer(512)
         self.latlayer3 = nn.Conv2d(256 * fold, 256, kernel_size=1, stride=1, padding=0)
-        self.bn_latlayer3 = nn.BatchNorm2d(256)
+        self.bn_latlayer3 = normalize_layer(256)
         # Smooth layers
         self.smooth1_1 = nn.Conv2d(256 * fold, 256, kernel_size=3, stride=1, padding=1)
-        self.bn_smooth1_1 = nn.BatchNorm2d(256)
+        self.bn_smooth1_1 = normalize_layer(256)
         self.smooth2_1 = nn.Conv2d(256 * fold, 256, kernel_size=3, stride=1, padding=1)
-        self.bn_smooth2_1 = nn.BatchNorm2d(256)
+        self.bn_smooth2_1 = normalize_layer(256)
         self.smooth3_1 = nn.Conv2d(256 * fold, 256, kernel_size=3, stride=1, padding=1)
-        self.bn_smooth3_1 = nn.BatchNorm2d(256)
+        self.bn_smooth3_1 = normalize_layer(256)
         self.smooth4_1 = nn.Conv2d(256 * fold, 256, kernel_size=3, stride=1, padding=1)
-        self.bn_smooth4_1 = nn.BatchNorm2d(256)
+        self.bn_smooth4_1 = normalize_layer(256)
         self.smooth1_2 = nn.Conv2d(256 * fold, 128, kernel_size=3, stride=1, padding=1)
-        self.bn_smooth1_2 = nn.BatchNorm2d(256)
+        self.bn_smooth1_2 = normalize_layer(256)
         self.smooth2_2 = nn.Conv2d(256 * fold, 128, kernel_size=3, stride=1, padding=1)
-        self.bn_smooth2_2 = nn.BatchNorm2d(256)
+        self.bn_smooth2_2 = normalize_layer(256)
         self.smooth3_2 = nn.Conv2d(256 * fold, 128, kernel_size=3, stride=1, padding=1)
-        self.bn_smooth3_2 = nn.BatchNorm2d(256)
+        self.bn_smooth3_2 = normalize_layer(256)
         self.smooth4_2 = nn.Conv2d(256 * fold, 128, kernel_size=3, stride=1, padding=1)
-        self.bn_smooth4_2 = nn.BatchNorm2d(256)
+        self.bn_smooth4_2 = normalize_layer(256)
         
-        self.bn_ps2_0 = nn.BatchNorm2d(128)
-        self.bn_ps2_1 = nn.BatchNorm2d(128)
-        self.bn_ps2_2 = nn.BatchNorm2d(128)
-        self.bn_ps2_3 = nn.BatchNorm2d(128)
+        self.bn_ps2_0 = normalize_layer(128)
+        self.bn_ps2_1 = normalize_layer(128)
+        self.bn_ps2_2 = normalize_layer(128)
+        self.bn_ps2_3 = normalize_layer(128)
         
         # Classify layers
         self.smooth = nn.Conv2d(128*4*fold, 128*4, kernel_size=3, stride=1, padding=1)

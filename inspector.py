@@ -84,7 +84,7 @@ def prepare_dataset_loaders(dataset_name, data_path, batch_size, distributed, wo
     
     # Create data loaders
     dataloader_train = DataLoader(dataset=dataset_train, batch_sampler=train_batch_sampler, num_workers=workers, collate_fn=collate)
-    dataloader_val = DataLoader(dataset=dataset_val, batch_size=1, sampler=val_sampler, num_workers=workers, collate_fn=collate)
+    dataloader_val = DataLoader(dataset=dataset_val, batch_size=batch_size, sampler=val_sampler, num_workers=workers, collate_fn=collate)
     dataloader_test = DataLoader(dataset=dataset_test, batch_size=1, sampler=test_sampler, num_workers=workers, collate_fn=collate)
     
     return train_sampler, dataloader_train, dataloader_val, dataloader_test
