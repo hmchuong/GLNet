@@ -1,4 +1,4 @@
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=7
 python inspector.py \
 --evaluation \
 --generate_image \
@@ -10,12 +10,12 @@ python inspector.py \
 --glob2local \
 --supervision \
 --log_path "/vinai/chuonghm/inspector/logs" \
---task_name "eval_inspector_deepglobe_global_resnetfpn_508_local0" \
---restore_path "/vinai/chuonghm/inspector/logs/inspector_deepglobe_global_resnetfpn_508_local0_3/inspector_deepglobe_global_resnetfpn_508_local0_3.pth" \
+--task_name "eval_global_transpose" \
+--restore_path "/vinai/chuonghm/inspector/logs/inspector_global_508_transpose/inspector_global_508_transpose.pth" \
 --patch_sizes 1350 702 508 \
 --size 508 \
 --origin_size 2448 \
---training_level 0 \
+--training_level -1 \
 --lr 5e-5 \
 --reduce_step_size 50 \
 --early_stopping 120 \

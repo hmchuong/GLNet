@@ -1,5 +1,6 @@
 import os
 import random
+import pickle
 
 import cv2
 import numpy as np
@@ -23,7 +24,7 @@ def is_image_file(filename):
 class DeepGlobe(BaseDataset):
     """input and label image dataset"""
 
-    def __init__(self, root, ids, label=False, transform=False):
+    def __init__(self, root, ids, label=False, transform=False, restore_features=None):
         super(DeepGlobe, self).__init__()
         self.root = root
         self.label = label
@@ -41,6 +42,7 @@ class DeepGlobe(BaseDataset):
         }
         self.color_jitter = transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.04)
         self.resizer = transforms.Resize((2448, 2448))
+        self.restore_features = restore_features
     
     @staticmethod
     def prepare_subset_ids(data_path):
@@ -69,6 +71,11 @@ class DeepGlobe(BaseDataset):
         laplacian_label[laplacian_label == 0] = 0.5
         sample['weight'] = torch.from_numpy(laplacian_label)
         
+        if self.restore_features is not None:
+            filename = os.path.join(self.restore_features, sample['id']+".pkl")
+            # features, out = pickle.load(open(filename, "rb"))
+            sample['features'] = filename
+            # sample['out'] = out
         return sample
 
     def _transform(self, image, label):
