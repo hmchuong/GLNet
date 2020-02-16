@@ -6,6 +6,7 @@ from torchvision.models.segmentation import fcn_resnet50
 from .unet import Unet
 import numpy as np
 from utils.parallel import map_parallel
+from .attention import AFNB
 
 def to_global(params):
     feat, coordinates, ratios = params
@@ -22,7 +23,7 @@ def to_global(params):
     return F.interpolate(out, size=(feat.shape[2], feat.shape[3]), mode='bilinear')
 
 class InterFeatures(object):
-    def __init__(self, c2, c3, c4, c5, ps0, ps1, ps2):
+    def __init__(self, c2, c3, c4, c5, ps0, ps1, ps2, ps3):
         self.c2 = c2
         self.c3 = c3
         self.c4 = c4
@@ -30,15 +31,17 @@ class InterFeatures(object):
         self.ps0 = ps0
         self.ps1 = ps1
         self.ps2 = ps2
+        self.ps3 = ps3
     
     def __getitem__(self, index):
         patch_feat = [self.c2[index], self.c3[index], self.c4[index], self.c5[index]]
         for feat in [self.ps0, self.ps1, self.ps2]:
             patch_feat.append([f[index] for f in feat])
+        patch_feat += [self.ps3[index]]
         return patch_feat
     
     def detach(self):
-        arr = [self.c2, self.c3, self.c4, self.c5] + self.ps0 + self.ps1 + self.ps2
+        arr = [self.c2, self.c3, self.c4, self.c5] + self.ps0 + self.ps1 + self.ps2 + [self.ps3]
         arr = map_parallel(lambda x: x.detach(), arr)
         self.c2 = arr[0]
         self.c3 = arr[1]
@@ -46,11 +49,12 @@ class InterFeatures(object):
         self.c5 = arr[3]
         self.ps0 = arr[4:8]
         self.ps1 = arr[8:12]
-        self.ps2 = arr[12:]
+        self.ps2 = arr[12:-1]
+        self.ps3 = arr[-1]
         return self
     
     def to(self, device):
-        arr = [self.c2, self.c3, self.c4, self.c5] + self.ps0 + self.ps1 + self.ps2
+        arr = [self.c2, self.c3, self.c4, self.c5] + self.ps0 + self.ps1 + self.ps2 + [self.ps3]
         arr = map_parallel(lambda x: x.to(device), arr)
         return InterFeatures(arr[0], 
                              arr[1], 
@@ -58,7 +62,7 @@ class InterFeatures(object):
                              arr[3], 
                              arr[4:8], 
                              arr[8:12], 
-                             arr[12:])
+                             arr[12:-1], arr[-1])
     def unsqueeze(self):
         self.c2 = self.c2.unsqueeze(0)
         self.c3 = self.c3.unsqueeze(0)
@@ -67,6 +71,7 @@ class InterFeatures(object):
         self.ps0 = [f.unsqueeze(0) for f in self.ps0]
         self.ps1 = [f.unsqueeze(0) for f in self.ps1]
         self.ps2 = [f.unsqueeze(0) for f in self.ps2]
+        self.ps3 = self.ps3.unsqueeze(0)
         return self
         
     def __add__(self, o): 
@@ -79,8 +84,9 @@ class InterFeatures(object):
         ps0 = [torch.cat((f1, f2), dim=0) for f1, f2 in zip(self.ps0, o.ps0)]
         ps1 = [torch.cat((f1, f2), dim=0) for f1, f2 in zip(self.ps1, o.ps1)]
         ps2 = [torch.cat((f1, f2), dim=0) for f1, f2 in zip(self.ps2, o.ps2)]
+        ps3 = torch.cat((self.ps3, o.ps3), dim=0) 
         #print("Execution time", time.time() - start_time)
-        return InterFeatures(c2, c3, c4, c5, ps0, ps1, ps2)
+        return InterFeatures(c2, c3, c4, c5, ps0, ps1, ps2, ps3)
     
     def patches2global(self, coordinates, ratios):
         
@@ -93,6 +99,7 @@ class InterFeatures(object):
         tasks += [(f, coordinates, ratios) for f in self.ps0]
         tasks += [(f, coordinates, ratios) for f in self.ps1]
         tasks += [(f, coordinates, ratios) for f in self.ps2]
+        tasks += [(self.ps3, coordinates, ratios)]
         
         results = list(map(lambda x: to_global(x), tasks))
         out = InterFeatures(results[0], 
@@ -101,7 +108,8 @@ class InterFeatures(object):
                             results[3], 
                             [f for f in results[4:8]],
                             [f for f in results[8:12]],
-                            [f for f in results[12:]])
+                            [f for f in results[12:-1]],
+                            results[-1])
         # out = InterFeatures(self.to_global(self.c2, coordinates, ratios), 
         #                      self.to_global(self.c3, coordinates, ratios), 
         #                      self.to_global(self.c4, coordinates, ratios), 
@@ -191,7 +199,7 @@ class ResnetFPN(nn.Module):
         
         output = F.interpolate(output, size=(H, W), **self._up_kwargs)
         
-        return output, InterFeatures(c2, c3, c4, c5, ps0, ps1, ps2)
+        return output, InterFeatures(c2, c3, c4, c5, ps0, ps1, ps2, ps3)
 
 class Normalize2D(nn.Module):
     def __init__(self, channels):
@@ -205,10 +213,106 @@ class Normalize2D(nn.Module):
 class NormalizeConv2D(nn.Module):
     def __init__(self, channels):
         super(NormalizeConv2D, self).__init__()
-        self.conv = nn.Conv2d(channels, channels, 1)
+        #self.conv = nn.Conv2d(channels, channels, 1)
     
     def forward(self, x):
-        return self.conv(x)
+        # return self.conv(x)
+        return x
+
+def afbn_layer(channels):
+    return AFNB(channels, channels, channels, channels//4, channels //4, dropout=0.05)
+
+class ResnetFPNLocalAttention(nn.Module):
+    def __init__(self, numClass, local=0):
+        super(ResnetFPNLocalAttention, self).__init__()
+        self.resnet_backbone = resnet50(True)
+        self._up_kwargs = {'mode': 'bilinear'}
+
+        # Top layer
+        self.toplayer = nn.Conv2d(2048, 256, kernel_size=1, stride=1, padding=0) # Reduce channels
+        self.bn_top = afbn_layer(2048)
+        # Lateral layers
+        self.latlayer1 = nn.Conv2d(1024, 256, kernel_size=1, stride=1, padding=0)
+        self.bn_latlayer1 = afbn_layer(1024)
+        self.latlayer2 = nn.Conv2d(512, 256, kernel_size=1, stride=1, padding=0)
+        self.bn_latlayer2 = afbn_layer(512)
+        self.latlayer3 = nn.Conv2d(256, 256, kernel_size=1, stride=1, padding=0)
+        self.bn_latlayer3 = afbn_layer(256)
+        # Smooth layers
+        self.smooth1_1 = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1)
+        self.bn_smooth1_1 = afbn_layer(256)
+        self.smooth2_1 = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1)
+        self.bn_smooth2_1 = afbn_layer(256)
+        self.smooth3_1 = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1)
+        self.bn_smooth3_1 = afbn_layer(256)
+        self.smooth4_1 = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1)
+        self.bn_smooth4_1 = afbn_layer(256)
+        self.smooth1_2 = nn.Conv2d(256, 128, kernel_size=3, stride=1, padding=1)
+        self.bn_smooth1_2 = afbn_layer(256)
+        self.smooth2_2 = nn.Conv2d(256, 128, kernel_size=3, stride=1, padding=1)
+        self.bn_smooth2_2 = afbn_layer(256)
+        self.smooth3_2 = nn.Conv2d(256, 128, kernel_size=3, stride=1, padding=1)
+        self.bn_smooth3_2 = afbn_layer(256)
+        self.smooth4_2 = nn.Conv2d(256, 128, kernel_size=3, stride=1, padding=1)
+        self.bn_smooth4_2 = afbn_layer(256)
+        
+        self.bn_ps2_0 = afbn_layer(128)
+        self.bn_ps2_1 = afbn_layer(128)
+        self.bn_ps2_2 = afbn_layer(128)
+        self.bn_ps2_3 = afbn_layer(128)
+        
+        # Classify layers
+        self.smooth = nn.Conv2d(128*4, 128*4, kernel_size=3, stride=1, padding=1)
+        self.classify = nn.Conv2d(128*4, numClass, kernel_size=3, stride=1, padding=1)
+
+    def _concatenate(self, p5, p4, p3, p2):
+        _, _, H, W = p2.size()
+        p5 = F.interpolate(p5, size=(H, W), **self._up_kwargs)
+        p4 = F.interpolate(p4, size=(H, W), **self._up_kwargs)
+        p3 = F.interpolate(p3, size=(H, W), **self._up_kwargs)
+        return torch.cat([p5, p4, p3, p2], dim=1)
+
+    def _upsample_add(self, x, y):
+        _, _, H, W = y.size()
+        return F.interpolate(x, size=(H, W), **self._up_kwargs) + y
+
+    def forward(self, input):
+        image, c2_ext, c3_ext, c4_ext, c5_ext, ps0_ext, ps1_ext, ps2_ext = input
+        _, _, H, W = image.shape
+        c2, c3, c4, c5 = self.resnet_backbone(image)
+        # Top-down
+        p5 = self.toplayer(self.bn_top(F.interpolate(c5_ext, size=c5.size()[2:], **self._up_kwargs), c5))
+        p4 = self._upsample_add(p5, self.latlayer1(self.bn_latlayer1(F.interpolate(c4_ext, size=c4.size()[2:], **self._up_kwargs), c4)))
+        p3 = self._upsample_add(p4, self.latlayer2(self.bn_latlayer2(F.interpolate(c3_ext, size=c3.size()[2:], **self._up_kwargs), c3)))
+        p2 = self._upsample_add(p3, self.latlayer3(self.bn_latlayer3(F.interpolate(c2_ext, size=c2.size()[2:], **self._up_kwargs), c2)))
+        ps0 = [p5, p4, p3, p2]
+        
+        # Smooth
+        p5 = self.smooth1_1(self.bn_smooth1_1(F.interpolate(ps0_ext[0], size=p5.size()[2:], **self._up_kwargs), p5))
+        p4 = self.smooth2_1(self.bn_smooth2_1(F.interpolate(ps0_ext[1], size=p4.size()[2:], **self._up_kwargs), p4))
+        p3 = self.smooth3_1(self.bn_smooth3_1(F.interpolate(ps0_ext[2], size=p3.size()[2:], **self._up_kwargs), p3))
+        p2 = self.smooth4_1(self.bn_smooth4_1(F.interpolate(ps0_ext[3], size=p2.size()[2:], **self._up_kwargs), p2))
+        ps1 = [p5, p4, p3, p2]
+        
+        p5 = self.smooth1_2(self.bn_smooth1_2(F.interpolate(ps1_ext[0], size=p5.size()[2:], **self._up_kwargs), p5))
+        p4 = self.smooth2_2(self.bn_smooth2_2(F.interpolate(ps1_ext[1], size=p4.size()[2:], **self._up_kwargs), p4))
+        p3 = self.smooth3_2(self.bn_smooth3_2(F.interpolate(ps1_ext[2], size=p3.size()[2:], **self._up_kwargs), p3))
+        p2 = self.smooth4_2(self.bn_smooth4_2(F.interpolate(ps1_ext[3], size=p2.size()[2:], **self._up_kwargs), p2))
+        ps2 = [p5, p4, p3, p2]
+        
+        # Classify
+        ps3 = self._concatenate(
+                self.bn_ps2_0(F.interpolate(ps2_ext[0], size=p5.size()[2:], **self._up_kwargs), p5), 
+                self.bn_ps2_1(F.interpolate(ps2_ext[1], size=p4.size()[2:], **self._up_kwargs), p4), 
+                self.bn_ps2_2(F.interpolate(ps2_ext[2], size=p3.size()[2:], **self._up_kwargs), p3), 
+                self.bn_ps2_3(F.interpolate(ps2_ext[3], size=p2.size()[2:], **self._up_kwargs), p2)
+            )
+        ps3 = self.smooth(ps3)
+        output = self.classify(ps3)
+        
+        output = F.interpolate(output, size=(H, W), **self._up_kwargs)
+        
+        return output, InterFeatures(c2, c3, c4, c5, ps0, ps1, ps2, ps3)
 
 class ResnetFPNLocal(nn.Module):
     def __init__(self, numClass, local_level=0):
@@ -281,7 +385,7 @@ class ResnetFPNLocal(nn.Module):
         return F.interpolate(x, size=(H, W), **self._up_kwargs) + y
 
     def forward(self, input):
-        image, c2_ext, c3_ext, c4_ext, c5_ext, ps0_ext, ps1_ext, ps2_ext = input
+        image, c2_ext, c3_ext, c4_ext, c5_ext, ps0_ext, ps1_ext, ps2_ext, _ = input
         _, _, H, W = image.shape
         c2, c3, c4, c5 = self.resnet_backbone(image)
         # Top-down
@@ -316,12 +420,13 @@ class ResnetFPNLocal(nn.Module):
         
         output = F.interpolate(output, size=(H, W), **self._up_kwargs)
         
-        return output, InterFeatures(c2, c3, c4, c5, ps0, ps1, ps2)
+        return output, InterFeatures(c2, c3, c4, c5, ps0, ps1, ps2, ps3)
     
 class FCNResnet50(nn.Module):
     def __init__(self, num_classes):
         super(FCNResnet50, self).__init__()
         self.net = fcn_resnet50(num_classes=num_classes)
+
         
     def forward(self, images):
         return self.net(images)['out']
@@ -469,6 +574,26 @@ class LocalRefinement1(nn.Module):
         # Refine prediction
         refinement_prediction = self.refinement(combine_prediction)
         
+        return patch_prediction, refinement_prediction
+
+class LocalRefinement5(nn.Module):
+    
+    def __init__(self, num_classes, BackBoneNet, local_level=0):
+        super(LocalRefinement5, self).__init__()
+        self.backbone = BackBoneNet(num_classes, local_level)
+        self.refinement = nn.Conv2d(128 * 4 * 2, num_classes, kernel_size=3, stride=1, padding=1)
+
+    def forward(self, images, previous_prediction):
+        # Predict on patch
+        patch_prediction = self.backbone(images)
+        
+        # Combine with previous prediction
+        inp_shape = patch_prediction[1].ps3.shape
+        combine_prediction = torch.cat([patch_prediction[1].ps3, F.interpolate(images[-1], size=inp_shape[-2:], mode='bilinear')], dim=1)
+        
+        # Refine prediction
+        refinement_prediction = self.refinement(combine_prediction)
+        refinement_prediction = F.interpolate(refinement_prediction, size=(508, 508), mode='bilinear')
         return patch_prediction, refinement_prediction
         
 def get_backbone_class(backbone_str):
