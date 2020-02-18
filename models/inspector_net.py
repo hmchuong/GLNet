@@ -357,6 +357,7 @@ class ResnetFPNLocal(nn.Module):
         # Classify layers
         self.smooth = nn.Conv2d(128*4*fold, 128*4, kernel_size=3, stride=1, padding=1)
         self.classify = nn.Conv2d(128*4, numClass, kernel_size=3, stride=1, padding=1)
+        self.upsample = nn.Conv2d(numClass, numClass, kernel_size=5, padding=2)
 
     def _concatenate(self, p5, p4, p3, p2):
         _, _, H, W = p2.size()
@@ -419,7 +420,7 @@ class ResnetFPNLocal(nn.Module):
         output = self.classify(ps3)
         
         output = F.interpolate(output, size=(H, W), **self._up_kwargs)
-        
+        output = self.upsample(output)
         return output, InterFeatures(c2, c3, c4, c5, ps0, ps1, ps2, ps3)
     
 class FCNResnet50(nn.Module):
@@ -582,6 +583,7 @@ class LocalRefinement5(nn.Module):
         super(LocalRefinement5, self).__init__()
         self.backbone = BackBoneNet(num_classes, local_level)
         self.refinement = nn.Conv2d(128 * 4 * 2, num_classes, kernel_size=3, stride=1, padding=1)
+        self.upsample = nn.Conv2d(num_classes, num_classes, kernel_size=5, padding=2)
 
     def forward(self, images, previous_prediction):
         # Predict on patch
@@ -594,6 +596,33 @@ class LocalRefinement5(nn.Module):
         # Refine prediction
         refinement_prediction = self.refinement(combine_prediction)
         refinement_prediction = F.interpolate(refinement_prediction, size=(508, 508), mode='bilinear')
+        refinement_prediction = self.upsample(refinement_prediction)
+        return patch_prediction, refinement_prediction
+    
+class LocalRefinement6(nn.Module):
+    
+    def __init__(self, num_classes, BackBoneNet, local_level=0):
+        super(LocalRefinement6, self).__init__()
+        self.backbone = BackBoneNet(num_classes, local_level)
+        self.combine = nn.Conv2d(1024, 512, kernel_size=3, stride=1, padding=1)
+        self.attention = AFNB(1024, 512, 512, 128, 128, dropout=0.05)
+        self.classify = nn.Conv2d(512, num_classes, kernel_size=3, stride=1, padding=1)
+        self.upsample = nn.Conv2d(num_classes, num_classes, kernel_size=5, padding=2)
+
+    def forward(self, images, previous_prediction):
+        # Predict on patch
+        patch_prediction = self.backbone(images)
+        
+        # Combine with previous prediction
+        inp_shape = patch_prediction[1].ps3.shape
+        combine_prediction = torch.cat([patch_prediction[1].ps3, F.interpolate(images[-1], size=inp_shape[-2:], mode='bilinear')], dim=1)
+        combine_b = self.combine(combine_prediction)
+        combine_prediction = self.attention(combine_prediction, combine_b)
+        
+        # Refine prediction
+        refinement_prediction = self.classify(combine_prediction)
+        refinement_prediction = F.interpolate(refinement_prediction, size=(508, 508), mode='bilinear')
+        refinement_prediction = self.upsample(refinement_prediction)
         return patch_prediction, refinement_prediction
         
 def get_backbone_class(backbone_str):

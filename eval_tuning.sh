@@ -31,20 +31,19 @@
 export CUDA_VISIBLE_DEVICES=0
 python inspector.py \
 --evaluation \
---generate_image \
 --dataset_name "DeepGlobe" \
 --data_path "/vinai/chuonghm/deep_globe" \
 --n_class 7 \
 --num_scaling_level 3 \
---refinement 1 \
+--refinement 6 \
 --glob2local \
 --supervision \
 --log_path "/vinai/chuonghm/inspector/logs" \
---task_name "eval_local0_1384" \
---restore_path "/vinai/chuonghm/inspector/logs/tuning_patchsize_1384/tuning_patchsize_1384.pth" \
+--task_name "eval_local0_1439_hanoi" \
+--restore_path "/vinai/chuonghm/inspector/logs/tuning_patchsize_1439_hanoi/tuning_patchsize_1439_hanoi.pth" \
 --batch_size 6 \
 --sub_batch_size 6 \
---patch_sizes 1384 721 508 \
+--patch_sizes 1439 721 508 \
 --size 508 \
 --origin_size 2448 \
 --training_level 0 \

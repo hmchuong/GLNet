@@ -319,7 +319,7 @@ class Trainer(object):
         # Calculate loss if current training level
         if sub_backward:
             
-            loss = (1 - self.lamb_reg) * self.criterion(aggre_predictions, label_patches_var.to(self.device), weight_patches_var.to(self.device)) \
+            loss = self.criterion(aggre_predictions, label_patches_var.to(self.device), weight_patches_var.to(self.device)) \
                 + self.lamb_reg * self.reg_loss_fn(aggre_predictions, out_patches_var.to(self.device))
             if self.supervision and local_predictions is not None:
                 loss += self.criterion(local_predictions[0], label_patches_var.to(self.device), None)
